@@ -1,0 +1,4118 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Report xmlns="http://schemas.microsoft.com/sqlserver/reporting/2016/01/reportdefinition" xmlns:rd="http://schemas.microsoft.com/SQLServer/reporting/reportdesigner" xmlns:am="http://schemas.microsoft.com/sqlserver/reporting/authoringmetadata">
+  <am:AuthoringMetadata>
+    <am:CreatedBy>
+      <am:Name>SSDTRS</am:Name>
+      <am:Version>17.5.33424.131</am:Version>
+    </am:CreatedBy>
+    <am:UpdatedBy>
+      <am:Name>SSDTRS</am:Name>
+      <am:Version>18.4.11605.240</am:Version>
+    </am:UpdatedBy>
+    <am:LastModifiedTimestamp>2026-03-18T00:03:51.1374446Z</am:LastModifiedTimestamp>
+  </am:AuthoringMetadata>
+  <Author>Inspire Education Group</Author>
+  <AutoRefresh>0</AutoRefresh>
+  <DataSources>
+    <DataSource Name="ProSolution">
+      <DataSourceReference>ProSolution</DataSourceReference>
+      <rd:SecurityType>Windows</rd:SecurityType>
+      <rd:DataSourceID>1b82cd94-8454-486e-89d5-52e7b263a15d</rd:DataSourceID>
+    </DataSource>
+  </DataSources>
+  <DataSets>
+    <DataSet Name="SCA001">
+      <Query>
+        <DataSourceName>ProSolution</DataSourceName>
+        <QueryParameters>
+          <QueryParameter Name="@AcademicYear">
+            <Value>=Parameters!AcademicYear.Value</Value>
+          </QueryParameter>
+          <QueryParameter Name="@ILRReturn">
+            <Value>=Parameters!ILRReturn.Value</Value>
+          </QueryParameter>
+        </QueryParameters>
+        <CommandText>/*
+DECLARE @AcademicYear VARCHAR(5) = '25/26'
+DECLARE @ILRReturn VARCHAR(3) = 'R07'
+*/
+
+
+DECLARE @LastYear VARCHAR(5) = CAST ( CAST ( LEFT ( @AcademicYear, 2 ) AS INT ) - 1 AS VARCHAR(2) ) + '/' + CAST ( CAST ( RIGHT ( @AcademicYear, 2 ) AS INT ) - 1 AS VARCHAR(2) )
+
+
+--Attendance
+--Register Session Dates - Planned and Ad-Hoc
+DROP TABLE IF EXISTS #RegisterSessionDates
+SELECT
+	REG.RegisterID,
+	RSES.RegisterSessionID,
+	RSES.Date,
+	RSES.StartTime,
+	RSES.EndTime,
+	RSES.Duration
+	INTO #RegisterSessionDates
+FROM ProSolution.dbo.Register REG
+INNER JOIN ProSolution.dbo.RegisterSession RSES
+	ON RSES.RegisterID = REG.RegisterID
+WHERE
+	REG.AcademicYearID = @AcademicYear
+UNION
+
+SELECT
+	REGSC.RegisterID,
+	RegisterSessionID = 0 - REGSC.RegisterScheduleID,
+	REGSC.Date,
+	REGSC.StartTime,
+	REGSC.EndTime,
+	REGSC.Duration
+FROM ProSolution.dbo.Register REG
+INNER JOIN ProSolution.dbo.RegisterSchedule REGSC
+	ON REGSC.RegisterID = REG.RegisterID
+WHERE
+	REG.AcademicYearID = @AcademicYear
+
+
+
+--Register Sessions - Planned and Ad-Hoc
+DROP TABLE IF EXISTS #RegisterSession
+SELECT
+	RSES.RegisterID,
+	RegisterSessionID = MAX ( RSES.RegisterSessionID ),
+	SessionNo = 
+		ROW_NUMBER () OVER (
+			PARTITION BY
+				RSES.RegisterID
+			ORDER BY
+				RSES.Date,
+				RSES.StartTime
+		),
+	RSES.Date,
+	RSES.StartTime,
+	EndTime = MAX ( RSES.EndTime ),
+	Duration = MAX ( RSES.Duration )
+	INTO #RegisterSession
+FROM #RegisterSessionDates RSES
+--WHERE
+--	RSES.RegisterID = 199179
+GROUP BY
+	RSES.RegisterID,
+	RSES.Date,
+	RSES.StartTime
+--ORDER BY
+--	RSES.Date
+
+ALTER TABLE #RegisterSession
+ALTER COLUMN RegisterID INT NOT NULL
+ALTER TABLE #RegisterSession
+ALTER COLUMN RegisterSessionID INT NOT NULL
+ALTER TABLE #RegisterSession
+ALTER COLUMN SessionNo INT NOT NULL
+ALTER TABLE #RegisterSession
+ADD PRIMARY KEY (RegisterID, RegisterSessionID, SessionNo);
+
+
+
+--Attendance (Change Columns As Needed)
+DROP TABLE IF EXISTS #AttendData
+SELECT
+	AcademicYearID = SD.AcademicYearID,
+	StudentDetailID = SD.StudentDetailID,
+	StudentRef = RTRIM ( SD.RefNo ),
+	CourseCode = CRS.Code,
+	IsLast4Weeks = 
+		CASE
+			WHEN CAST ( RSES.Date AS DATE ) &gt;= CAST ( DATEADD ( DAY, -28, GETDATE() ) AS DATE )
+			AND CAST ( RSES.Date AS DATE ) &lt;= CAST ( GETDATE() AS DATE )
+			THEN 'Y'
+			ELSE 'N'
+		END,
+	LessonID = RSES.RegisterSessionID,
+	IsLessonToDate = CASE WHEN CAST ( RSES.Date AS DATE ) &lt;= CAST ( GETDATE() AS DATE ) THEN 'Y' ELSE 'N' END,
+	SlotID = RSES.RegisterSessionID,
+	Marked = CASE WHEN RM.MarkTypeID IS NOT NULL AND CAST ( RSES.Date AS DATE ) &lt;= CAST ( GETDATE() AS DATE ) THEN 1 ELSE 0 END,
+	Unmarked = CASE WHEN RM.MarkTypeID IS NULL AND CAST ( RSES.Date AS DATE ) &lt;= CAST ( GETDATE() AS DATE ) THEN 1 ELSE 0 END,
+	--Change to COALESCE ( MTS.MarkTypeStatusID, 0 ) to count missing marks as possible
+	Possible = CASE WHEN COALESCE ( MTS.MarkTypeStatusID, 2 ) &lt;&gt; 2 AND CAST ( RSES.Date AS DATE ) &lt;= CAST ( GETDATE() AS DATE ) THEN 1 ELSE 0 END,
+	Present = CASE WHEN MTS.MarkTypeStatusID = 1 THEN 1 ELSE 0 END,
+	Absent = CASE WHEN MTS.MarkTypeStatusID = 0 THEN 1 ELSE 0 END,
+	Neutral = CASE WHEN MTS.MarkTypeStatusID = 2 THEN 1 ELSE 0 END,
+	--NeutralNonDefault = SUM ( CASE WHEN MTS.MarkTypeStatusID = 2 AND DEF.DefaultNeutralMark IS NULL THEN 1 ELSE 0 END ),
+	AuthAbsence = CASE WHEN MT.IsAuthorisedAbsence = 1 THEN 1 ELSE 0 END,
+	Late = CASE WHEN MT.IsLate = 1 THEN 1 ELSE 0 END
+	INTO #AttendData
+FROM ProSolution.dbo.StudentDetail SD
+INNER JOIN ProSolution.dbo.Enrolment ENR
+	ON ENR.StudentDetailID = SD.StudentDetailID
+INNER JOIN ProSolution.dbo.Offering CRS
+	ON CRS.OfferingID = ENR.OfferingID
+INNER JOIN ProSolution.dbo.RegisterStudent REGS
+	ON REGS.EnrolmentID = ENR.EnrolmentID
+INNER JOIN ProSolution.dbo.Register REG
+	ON REG.RegisterID = REGS.RegisterID
+INNER JOIN #RegisterSession RSES
+	ON RSES.RegisterID = REG.RegisterID
+LEFT JOIN ProSolution.dbo.RegisterMark AS RM 
+	ON RM.RegisterSessionID = RSES.RegisterSessionID
+	AND RM.RegisterStudentID = REGS.RegisterStudentID
+LEFT JOIN ProSolution.dbo.MarkType AS MT 
+	ON MT.MarkTypeID = RM.MarkTypeID
+LEFT JOIN ProSolution.dbo.MarkTypeStatus MTS
+	ON MTS.MarkTypeStatusID = MT.MarkTypeStatusID
+LEFT JOIN ProSolution.dbo.Learning_Aim AIM
+	ON AIM.LEARNING_AIM_REF = CRS.QualID
+--LEFT JOIN (
+--	SELECT DISTINCT
+--		DefaultNeutralMark = ST.Setting
+--	FROM SystemSetting ST
+--	WHERE
+--		ST.Code IN ( 
+--			'TransferredMark',
+--			'WithdrawnMark',
+--			'TempWithdrawnMark',
+--			'BackFillMark',
+--			'BackFillMarkAfterStart'
+--		)
+--		AND ST.Setting IS NOT NULL
+--) DEF
+--	ON DEF.DefaultNeutralMark = MT.Mark
+WHERE
+	SD.AcademicYearID = @AcademicYear
+--ORDER BY
+--	SD.AcademicYearID,
+--	CRS.Code
+
+
+--Attendance
+DROP TABLE IF EXISTS #Attend
+SELECT
+	ATT.AcademicYearID,
+	ATT.StudentDetailID,
+	ATT.StudentRef,
+	Possible = SUM ( ATT.Possible ),
+	Present = SUM ( ATT.Present )
+	INTO #Attend
+FROM #AttendData ATT
+GROUP BY
+	ATT.AcademicYearID,
+	ATT.StudentDetailID,
+	ATT.StudentRef
+
+
+
+--Non-Attendance By Learner
+DROP TABLE IF EXISTS #NonAttendData
+SELECT
+	ATT.StudentDetailID,
+	ATT.StudentRef,
+	Is4WeekNonAttend = 
+		CASE 
+			WHEN 
+				SUM ( ATT.Absent ) &gt; 0
+				AND SUM ( ATT.Present ) = 0
+				THEN 'Y'
+			ELSE 'N'
+		END
+	INTO #NonAttendData
+FROM #AttendData ATT
+WHERE
+	ATT.IsLast4Weeks = 'Y'
+GROUP BY
+	ATT.StudentDetailID,
+	ATT.StudentRef
+
+
+--Non Attenders
+DROP TABLE IF EXISTS #NonAttend
+SELECT
+	ATT.StudentDetailID,
+	ATT.StudentRef
+	INTO #NonAttend
+FROM #NonAttendData ATT
+WHERE
+	ATT.Is4WeekNonAttend = 'Y'
+
+
+
+--High Risk (from ProMonitor)
+DROP TABLE IF EXISTS #AtRisk
+SELECT
+	StudentRef = S.StudentID,
+	StudentRiskCode = S.LearnerStatus,
+	StudentRiskName = STA.LearnerStatus
+	INTO #AtRisk
+FROM [DBS-MIS-02\advanced].ProMonitor.dbo.Student S
+INNER JOIN [DBS-MIS-02\advanced].ProMonitor.dbo.LearnerInformation_LearnerStatus STA
+	ON STA.LearnerStatusID = S.LearnerStatus
+WHERE
+	S.AcademicYearID = @AcademicYear
+	AND S.LearnerStatus = 1
+
+
+
+--Retention and Achievement
+DROP TABLE IF EXISTS #RetAch
+SELECT
+	PA.EndYear,
+	Category = 'ALL',
+	RetInYrPer = 
+		ROUND ( 
+			CASE
+				WHEN SUM ( PA.IsStart ) = 0 THEN 0
+				ELSE
+					CAST ( SUM ( PA.IsRetInYr ) AS FLOAT )
+					/
+					CAST ( SUM ( PA.IsStart ) AS FLOAT )
+			END,
+			3
+		),
+	RetPer = 
+		ROUND ( 
+			CASE
+				WHEN SUM ( PA.IsLeaver ) = 0 THEN 0
+				ELSE
+					CAST ( SUM ( PA.IsComp ) AS FLOAT )
+					/
+					CAST ( SUM ( PA.IsLeaver ) AS FLOAT )
+			END,
+			3
+		),
+	AchPer = 
+		ROUND ( 
+			CASE
+				WHEN SUM ( PA.IsLeaver ) = 0 THEN 0
+				ELSE
+					CAST ( SUM ( PA.IsAch ) AS FLOAT )
+					/
+					CAST ( SUM ( PA.IsLeaver ) AS FLOAT )
+			END,
+			3
+		),
+	PassPer = 
+		ROUND ( 
+			CASE
+				WHEN SUM ( PA.IsComp ) = 0 THEN 0
+				ELSE
+					CAST ( SUM ( PA.IsAch ) AS FLOAT )
+					/
+					CAST ( SUM ( PA.IsComp ) AS FLOAT )
+			END,
+			3
+		),
+	PassBestCasePer = 
+		ROUND ( 
+			CASE
+				WHEN SUM ( CASE WHEN PA.IsWdr = 0 AND PA.IsPlannedBreak = 0 AND PA.IsLeaverBestCase = 1 THEN 1 ELSE 0 END ) = 0 THEN 0
+				ELSE
+					CAST ( SUM ( PA.IsAchBestCase ) AS FLOAT )
+					/
+					CAST ( SUM ( CASE WHEN PA.IsWdr = 0 AND PA.IsPlannedBreak = 0 AND PA.IsLeaverBestCase = 1 THEN 1 ELSE 0 END ) AS FLOAT )
+			END,
+			3
+		)
+	INTO #RetAch
+FROM [DBS-MIS-02\advanced].ProAchieveSummariser.dbo.PRA_ProAchieveSummaryData PA
+WHERE
+	PA.EndYear &gt;= @LastYear
+	AND PA.EndYear &lt;= @AcademicYear
+	AND PA.ProvisionType = 'CL'
+	AND PA.SummaryType = 'Overall'
+	AND PA.IsDefaultSummary = 1
+GROUP BY
+	PA.EndYear
+
+UNION ALL
+
+SELECT
+	PA.EndYear,
+	Category = '1618',
+	RetInYrPer = 
+		ROUND ( 
+			CASE
+				WHEN SUM ( PA.IsStart ) = 0 THEN 0
+				ELSE
+					CAST ( SUM ( PA.IsRetInYr ) AS FLOAT )
+					/
+					CAST ( SUM ( PA.IsStart ) AS FLOAT )
+			END,
+			3
+		),
+	RetPer = 
+		ROUND ( 
+			CASE
+				WHEN SUM ( PA.IsLeaver ) = 0 THEN 0
+				ELSE
+					CAST ( SUM ( PA.IsComp ) AS FLOAT )
+					/
+					CAST ( SUM ( PA.IsLeaver ) AS FLOAT )
+			END,
+			3
+		),
+	AchPer = 
+		ROUND ( 
+			CASE
+				WHEN SUM ( PA.IsLeaver ) = 0 THEN 0
+				ELSE
+					CAST ( SUM ( PA.IsAch ) AS FLOAT )
+					/
+					CAST ( SUM ( PA.IsLeaver ) AS FLOAT )
+			END,
+			3
+		),
+	PassPer = 
+		ROUND ( 
+			CASE
+				WHEN SUM ( PA.IsComp ) = 0 THEN 0
+				ELSE
+					CAST ( SUM ( PA.IsAch ) AS FLOAT )
+					/
+					CAST ( SUM ( PA.IsComp ) AS FLOAT )
+			END,
+			3
+		),
+	PassBestCasePer = 
+		ROUND ( 
+			CASE
+				WHEN SUM ( CASE WHEN PA.IsWdr = 0 AND PA.IsPlannedBreak = 0 AND PA.IsLeaverBestCase = 1 THEN 1 ELSE 0 END ) = 0 THEN 0
+				ELSE
+					CAST ( SUM ( PA.IsAchBestCase ) AS FLOAT )
+					/
+					CAST ( SUM ( CASE WHEN PA.IsWdr = 0 AND PA.IsPlannedBreak = 0 AND PA.IsLeaverBestCase = 1 THEN 1 ELSE 0 END ) AS FLOAT )
+			END,
+			3
+		)
+FROM [DBS-MIS-02\advanced].ProAchieveSummariser.dbo.PRA_ProAchieveSummaryData PA
+WHERE
+	PA.EndYear &gt;= @LastYear
+	AND PA.EndYear &lt;= @AcademicYear
+	AND PA.ProvisionType = 'CL'
+	AND PA.SummaryType = 'Overall'
+	AND PA.IsDefaultSummary = 1
+	AND PA.AgeGroup = '16 - 18'
+GROUP BY
+	PA.EndYear
+
+UNION ALL
+
+SELECT
+	PA.EndYear,
+	Category = '19+',
+	RetInYrPer = 
+		ROUND ( 
+			CASE
+				WHEN SUM ( PA.IsStart ) = 0 THEN 0
+				ELSE
+					CAST ( SUM ( PA.IsRetInYr ) AS FLOAT )
+					/
+					CAST ( SUM ( PA.IsStart ) AS FLOAT )
+			END,
+			3
+		),
+	RetPer = 
+		ROUND ( 
+			CASE
+				WHEN SUM ( PA.IsLeaver ) = 0 THEN 0
+				ELSE
+					CAST ( SUM ( PA.IsComp ) AS FLOAT )
+					/
+					CAST ( SUM ( PA.IsLeaver ) AS FLOAT )
+			END,
+			3
+		),
+	AchPer = 
+		ROUND ( 
+			CASE
+				WHEN SUM ( PA.IsLeaver ) = 0 THEN 0
+				ELSE
+					CAST ( SUM ( PA.IsAch ) AS FLOAT )
+					/
+					CAST ( SUM ( PA.IsLeaver ) AS FLOAT )
+			END,
+			3
+		),
+	PassPer = 
+		ROUND ( 
+			CASE
+				WHEN SUM ( PA.IsComp ) = 0 THEN 0
+				ELSE
+					CAST ( SUM ( PA.IsAch ) AS FLOAT )
+					/
+					CAST ( SUM ( PA.IsComp ) AS FLOAT )
+			END,
+			3
+		),
+	PassBestCasePer = 
+		ROUND ( 
+			CASE
+				WHEN SUM ( CASE WHEN PA.IsWdr = 0 AND PA.IsPlannedBreak = 0 AND PA.IsLeaverBestCase = 1 THEN 1 ELSE 0 END ) = 0 THEN 0
+				ELSE
+					CAST ( SUM ( PA.IsAchBestCase ) AS FLOAT )
+					/
+					CAST ( SUM ( CASE WHEN PA.IsWdr = 0 AND PA.IsPlannedBreak = 0 AND PA.IsLeaverBestCase = 1 THEN 1 ELSE 0 END ) AS FLOAT )
+			END,
+			3
+		)
+FROM [DBS-MIS-02\advanced].ProAchieveSummariser.dbo.PRA_ProAchieveSummaryData PA
+WHERE
+	PA.EndYear &gt;= @LastYear
+	AND PA.EndYear &lt;= @AcademicYear
+	AND PA.ProvisionType = 'CL'
+	AND PA.SummaryType = 'Overall'
+	AND PA.IsDefaultSummary = 1
+	AND PA.AgeGroup = '19 +'
+GROUP BY
+	PA.EndYear
+
+UNION ALL
+
+SELECT
+	PA.EndYear,
+	Category = 'GCSE1618',
+	RetInYrPer = 
+		ROUND ( 
+			CASE
+				WHEN SUM ( PA.IsStart ) = 0 THEN 0
+				ELSE
+					CAST ( SUM ( PA.IsRetInYr ) AS FLOAT )
+					/
+					CAST ( SUM ( PA.IsStart ) AS FLOAT )
+			END,
+			3
+		),
+	RetPer = 
+		ROUND ( 
+			CASE
+				WHEN SUM ( PA.IsLeaver ) = 0 THEN 0
+				ELSE
+					CAST ( SUM ( PA.IsComp ) AS FLOAT )
+					/
+					CAST ( SUM ( PA.IsLeaver ) AS FLOAT )
+			END,
+			3
+		),
+	AchPer = 
+		ROUND ( 
+			CASE
+				WHEN SUM ( PA.IsLeaver ) = 0 THEN 0
+				ELSE
+					CAST ( SUM ( PA.IsAch ) AS FLOAT )
+					/
+					CAST ( SUM ( PA.IsLeaver ) AS FLOAT )
+			END,
+			3
+		),
+	PassPer = 
+		ROUND ( 
+			CASE
+				WHEN SUM ( PA.IsComp ) = 0 THEN 0
+				ELSE
+					CAST ( SUM ( PA.IsAch ) AS FLOAT )
+					/
+					CAST ( SUM ( PA.IsComp ) AS FLOAT )
+			END,
+			3
+		),
+	PassBestCasePer = 
+		ROUND ( 
+			CASE
+				WHEN SUM ( CASE WHEN PA.IsWdr = 0 AND PA.IsPlannedBreak = 0 AND PA.IsLeaverBestCase = 1 THEN 1 ELSE 0 END ) = 0 THEN 0
+				ELSE
+					CAST ( SUM ( PA.IsAchBestCase ) AS FLOAT )
+					/
+					CAST ( SUM ( CASE WHEN PA.IsWdr = 0 AND PA.IsPlannedBreak = 0 AND PA.IsLeaverBestCase = 1 THEN 1 ELSE 0 END ) AS FLOAT )
+			END,
+			3
+		)
+FROM [DBS-MIS-02\advanced].ProAchieveSummariser.dbo.PRA_ProAchieveSummaryData PA
+WHERE
+	PA.EndYear &gt;= @LastYear
+	AND PA.EndYear &lt;= @AcademicYear
+	AND PA.ProvisionType = 'CL'
+	AND PA.SummaryType = 'Overall'
+	AND PA.IsDefaultSummary = 1
+	AND PA.LARSAimTypeCode = '0003'
+	AND PA.FundStream = '25'
+GROUP BY
+	PA.EndYear
+
+
+--FIS
+SELECT
+	AcademicYear = @AcademicYear,
+	LastYear = @LastYear,
+	ILRReturn = @ILRReturn,
+	ILRReturnDate = MAX ( FD.ILRReturnDate ),
+	Category = 'All Learners',
+	LastYearAch = RETL.AchPer,
+	Target = TAR.Target / 100,
+	AttendPer = 
+		ROUND ( 
+			CASE
+				WHEN SUM ( CASE WHEN FD.AcademicYear = @AcademicYear THEN ATT.Possible ELSE 0 END ) = 0 THEN 0
+				ELSE
+					CAST ( SUM ( CASE WHEN FD.AcademicYear = @AcademicYear THEN ATT.Present ELSE 0 END ) AS FLOAT )
+					/
+					CAST ( SUM ( CASE WHEN FD.AcademicYear = @AcademicYear THEN ATT.Possible ELSE 0 END ) AS FLOAT )
+			END
+		, 3 ),
+	CurrentRet = RET.RetInYrPer,
+	LastYearRetSamePoint = 
+		ROUND (
+			CASE
+				WHEN SUM ( CASE WHEN FD.AcademicYear = @LastYear AND FD.ILRReturn = @ILRReturn THEN FD.IsOverallStart ELSE 0 END ) = 0 THEN 0
+				ELSE
+					CAST ( SUM ( CASE WHEN FD.AcademicYear = @LastYear AND FD.ILRReturn = @ILRReturn THEN FD.IsOverallRetainedFunded ELSE 0 END ) AS FLOAT )
+					/
+					CAST ( SUM ( CASE WHEN FD.AcademicYear = @LastYear AND FD.ILRReturn = @ILRReturn THEN FD.IsOverallStart ELSE 0 END ) AS FLOAT )
+			END,
+			3
+		),
+	DiffRet = 
+		RET.RetInYrPer
+		-
+		ROUND (
+			CASE
+				WHEN SUM ( CASE WHEN FD.AcademicYear = @LastYear AND FD.ILRReturn = @ILRReturn THEN FD.IsOverallStart ELSE 0 END ) = 0 THEN 0
+				ELSE
+					CAST ( SUM ( CASE WHEN FD.AcademicYear = @LastYear AND FD.ILRReturn = @ILRReturn THEN FD.IsOverallRetainedFunded ELSE 0 END ) AS FLOAT )
+					/
+					CAST ( SUM ( CASE WHEN FD.AcademicYear = @LastYear AND FD.ILRReturn = @ILRReturn THEN FD.IsOverallStart ELSE 0 END ) AS FLOAT )
+			END,
+			3
+		),
+	NatAvgGFE = TAR.NatTargetGFE / 100,
+	NatAvgAll = TAR.NatTargetALL / 100,
+	CurrentVolume = COUNT ( DISTINCT CASE WHEN FD.AcademicYear = @AcademicYear THEN FD.LearnRefNumber ELSE NULL END ),
+	HighRisk = COUNT ( DISTINCT RSK.StudentRef ),
+	NonAttend = COUNT ( DISTINCT NAT.StudentRef ),
+	ProjectedPass = RET.PassBestCasePer,
+	LastYearFinalVolume = COUNT ( DISTINCT CASE WHEN FD.AcademicYear = @LastYear AND FD.ILRReturn = 'R14' THEN FD.LearnRefNumber ELSE NULL END )
+FROM FIS_FundingData.dbo.FIS_TeamTargets TAR
+LEFT JOIN FIS_FundingData.dbo.FIS_FundingData FD
+	ON FD.ProviderNumber = TAR.ProviderNumber
+LEFT JOIN #Attend ATT
+	ON ATT.StudentRef = FD.LearnRefNumber
+LEFT JOIN #NonAttend NAT
+	ON NAT.StudentRef = FD.LearnRefNumber
+LEFT JOIN #AtRisk RSK
+	ON RSK.StudentRef = FD.LearnRefNumber
+LEFT JOIN #RetAch RET
+	ON RET.EndYear = @LastYear
+	AND RET.Category = TAR.Measure
+LEFT JOIN #RetAch RETL
+	ON RETL.EndYear = @LastYear
+	AND RETL.Category = TAR.Measure
+WHERE
+	FD.AcademicYear &gt;= @LastYear
+	AND FD.AcademicYear &lt;= @AcademicYear
+	AND (
+		FD.ILRReturn = @ILRReturn
+		OR (
+			FD.AcademicYear = @LastYear
+			AND FD.ILRReturn = 'R14'
+			AND FD.ILRReturn &lt;&gt; @ILRReturn
+		)
+	)
+	AND FD.IsFinalReturn = 1
+	AND FD.IsOverallStart = 1
+	AND TAR.Measure = 'ALL'
+GROUP BY
+	RETL.AchPer,
+	TAR.Target,
+	RET.RetInYrPer,
+	TAR.NatTargetGFE,
+	TAR.NatTargetALL,
+	RET.PassBestCasePer
+
+UNION ALL
+
+SELECT
+	AcademicYear = @AcademicYear,
+	LastYear = @LastYear,
+	ILRReturn = @ILRReturn,
+	ILRReturnDate = MAX ( FD.ILRReturnDate ),
+	Category = '16-18 (inc. FS)',
+	LastYearAch = RETL.AchPer,
+	Target = TAR.Target / 100,
+	AttendPer = 
+		ROUND ( 
+			CASE
+				WHEN SUM ( CASE WHEN FD.AcademicYear = @AcademicYear THEN ATT.Possible ELSE 0 END ) = 0 THEN 0
+				ELSE
+					CAST ( SUM ( CASE WHEN FD.AcademicYear = @AcademicYear THEN ATT.Present ELSE 0 END ) AS FLOAT )
+					/
+					CAST ( SUM ( CASE WHEN FD.AcademicYear = @AcademicYear THEN ATT.Possible ELSE 0 END ) AS FLOAT )
+			END
+		, 3 ),
+	CurrentRet = RET.RetInYrPer,
+	LastYearRetSamePoint = 
+		ROUND (
+			CASE
+				WHEN SUM ( CASE WHEN FD.AcademicYear = @LastYear AND FD.ILRReturn = @ILRReturn THEN FD.IsOverallStart ELSE 0 END ) = 0 THEN 0
+				ELSE
+					CAST ( SUM ( CASE WHEN FD.AcademicYear = @LastYear AND FD.ILRReturn = @ILRReturn THEN FD.IsOverallRetainedFunded ELSE 0 END ) AS FLOAT )
+					/
+					CAST ( SUM ( CASE WHEN FD.AcademicYear = @LastYear AND FD.ILRReturn = @ILRReturn THEN FD.IsOverallStart ELSE 0 END ) AS FLOAT )
+			END,
+			3
+		),
+	DiffRet = 
+		RET.RetInYrPer
+		-
+		ROUND (
+			CASE
+				WHEN SUM ( CASE WHEN FD.AcademicYear = @LastYear AND FD.ILRReturn = @ILRReturn THEN FD.IsOverallStart ELSE 0 END ) = 0 THEN 0
+				ELSE
+					CAST ( SUM ( CASE WHEN FD.AcademicYear = @LastYear AND FD.ILRReturn = @ILRReturn THEN FD.IsOverallRetainedFunded ELSE 0 END ) AS FLOAT )
+					/
+					CAST ( SUM ( CASE WHEN FD.AcademicYear = @LastYear AND FD.ILRReturn = @ILRReturn THEN FD.IsOverallStart ELSE 0 END ) AS FLOAT )
+			END,
+			3
+		),
+	NatAvgGFE = TAR.NatTargetGFE / 100,
+	NatAvgAll = TAR.NatTargetALL / 100,
+	CurrentVolume = COUNT ( DISTINCT CASE WHEN FD.AcademicYear = @AcademicYear THEN FD.LearnRefNumber ELSE NULL END ),
+	HighRisk = COUNT ( DISTINCT RSK.StudentRef ),
+	NonAttend = COUNT ( DISTINCT NAT.StudentRef ),
+	ProjectedPass = RET.PassBestCasePer,
+	LastYearFinalVolume = COUNT ( DISTINCT CASE WHEN FD.AcademicYear = @LastYear AND FD.ILRReturn = 'R14' THEN FD.LearnRefNumber ELSE NULL END )
+FROM FIS_FundingData.dbo.FIS_TeamTargets TAR
+LEFT JOIN FIS_FundingData.dbo.FIS_FundingData FD
+	ON FD.ProviderNumber = TAR.ProviderNumber
+LEFT JOIN #Attend ATT
+	ON ATT.StudentRef = FD.LearnRefNumber
+LEFT JOIN #NonAttend NAT
+	ON NAT.StudentRef = FD.LearnRefNumber
+LEFT JOIN #AtRisk RSK
+	ON RSK.StudentRef = FD.LearnRefNumber
+LEFT JOIN #RetAch RET
+	ON RET.EndYear = @LastYear
+	AND RET.Category = TAR.Measure
+LEFT JOIN #RetAch RETL
+	ON RETL.EndYear = @LastYear
+	AND RETL.Category = TAR.Measure
+WHERE
+	FD.AcademicYear &gt;= @LastYear
+	AND FD.AcademicYear &lt;= @AcademicYear
+	AND (
+		FD.ILRReturn = @ILRReturn
+		OR (
+			FD.AcademicYear = @LastYear
+			AND FD.ILRReturn = 'R14'
+			AND FD.ILRReturn &lt;&gt; @ILRReturn
+		)
+	)
+	AND FD.IsFinalReturn = 1
+	AND FD.IsOverallStart = 1
+	AND FD.FundLineCategory = '16-19 Funding'
+	AND TAR.Measure = '1618'
+GROUP BY
+	RETL.AchPer,
+	TAR.Target,
+	RET.RetInYrPer,
+	TAR.NatTargetGFE,
+	TAR.NatTargetALL,
+	RET.PassBestCasePer
+
+UNION ALL
+
+SELECT
+	AcademicYear = @AcademicYear,
+	LastYear = @LastYear,
+	ILRReturn = @ILRReturn,
+	ILRReturnDate = MAX ( FD.ILRReturnDate ),
+	Category = '19+ (inc. FS)',
+	LastYearAch = RETL.AchPer,
+	Target = TAR.Target / 100,
+	AttendPer = 
+		ROUND ( 
+			CASE
+				WHEN SUM ( CASE WHEN FD.AcademicYear = @AcademicYear THEN ATT.Possible ELSE 0 END ) = 0 THEN 0
+				ELSE
+					CAST ( SUM ( CASE WHEN FD.AcademicYear = @AcademicYear THEN ATT.Present ELSE 0 END ) AS FLOAT )
+					/
+					CAST ( SUM ( CASE WHEN FD.AcademicYear = @AcademicYear THEN ATT.Possible ELSE 0 END ) AS FLOAT )
+			END
+		, 3 ),
+	CurrentRet = RET.RetInYrPer,
+	LastYearRetSamePoint = 
+		ROUND (
+			CASE
+				WHEN SUM ( CASE WHEN FD.AcademicYear = @LastYear AND FD.ILRReturn = @ILRReturn THEN FD.IsOverallStart ELSE 0 END ) = 0 THEN 0
+				ELSE
+					CAST ( SUM ( CASE WHEN FD.AcademicYear = @LastYear AND FD.ILRReturn = @ILRReturn THEN FD.IsOverallRetainedFunded ELSE 0 END ) AS FLOAT )
+					/
+					CAST ( SUM ( CASE WHEN FD.AcademicYear = @LastYear AND FD.ILRReturn = @ILRReturn THEN FD.IsOverallStart ELSE 0 END ) AS FLOAT )
+			END,
+			3
+		),
+	DiffRet = 
+		RET.RetInYrPer
+		-
+		ROUND (
+			CASE
+				WHEN SUM ( CASE WHEN FD.AcademicYear = @LastYear AND FD.ILRReturn = @ILRReturn THEN FD.IsOverallStart ELSE 0 END ) = 0 THEN 0
+				ELSE
+					CAST ( SUM ( CASE WHEN FD.AcademicYear = @LastYear AND FD.ILRReturn = @ILRReturn THEN FD.IsOverallRetainedFunded ELSE 0 END ) AS FLOAT )
+					/
+					CAST ( SUM ( CASE WHEN FD.AcademicYear = @LastYear AND FD.ILRReturn = @ILRReturn THEN FD.IsOverallStart ELSE 0 END ) AS FLOAT )
+			END,
+			3
+		),
+	NatAvgGFE = TAR.NatTargetGFE / 100,
+	NatAvgAll = TAR.NatTargetALL / 100,
+	CurrentVolume = COUNT ( DISTINCT CASE WHEN FD.AcademicYear = @AcademicYear THEN FD.LearnRefNumber ELSE NULL END ),
+	HighRisk = COUNT ( DISTINCT RSK.StudentRef ),
+	NonAttend = COUNT ( DISTINCT NAT.StudentRef ),
+	ProjectedPass = RET.PassBestCasePer,
+	LastYearFinalVolume = COUNT ( DISTINCT CASE WHEN FD.AcademicYear = @LastYear AND FD.ILRReturn = 'R14' THEN FD.LearnRefNumber ELSE NULL END )
+FROM FIS_FundingData.dbo.FIS_TeamTargets TAR
+LEFT JOIN FIS_FundingData.dbo.FIS_FundingData FD
+	ON FD.ProviderNumber = TAR.ProviderNumber
+LEFT JOIN #Attend ATT
+	ON ATT.StudentRef = FD.LearnRefNumber
+LEFT JOIN #NonAttend NAT
+	ON NAT.StudentRef = FD.LearnRefNumber
+LEFT JOIN #AtRisk RSK
+	ON RSK.StudentRef = FD.LearnRefNumber
+LEFT JOIN #RetAch RET
+	ON RET.EndYear = @LastYear
+	AND RET.Category = TAR.Measure
+LEFT JOIN #RetAch RETL
+	ON RETL.EndYear = @LastYear
+	AND RETL.Category = TAR.Measure
+WHERE
+	FD.AcademicYear &gt;= @LastYear
+	AND FD.AcademicYear &lt;= @AcademicYear
+	AND (
+		FD.ILRReturn = @ILRReturn
+		OR (
+			FD.AcademicYear = @LastYear
+			AND FD.ILRReturn = 'R14'
+			AND FD.ILRReturn &lt;&gt; @ILRReturn
+		)
+	)
+	AND FD.IsFinalReturn = 1
+	AND FD.IsOverallStart = 1
+	AND FD.FundLineCategory IN (
+		'Adult Skills Fund',
+		'Advanced Learner Loan',
+		'Full Cost',
+		'Higher Education',
+		'Skills Bootcamps'
+	)
+	AND TAR.Measure = '19+'
+GROUP BY
+	RETL.AchPer,
+	TAR.Target,
+	RET.RetInYrPer,
+	TAR.NatTargetGFE,
+	TAR.NatTargetALL,
+	RET.PassBestCasePer
+
+UNION ALL
+
+SELECT
+	AcademicYear = @AcademicYear,
+	LastYear = @LastYear,
+	ILRReturn = @ILRReturn,
+	ILRReturnDate = MAX ( FD.ILRReturnDate ),
+	Category = 'GCSE - 16-18',
+	LastYearAch = RETL.AchPer,
+	Target = TAR.Target / 100,
+	AttendPer = 
+		ROUND ( 
+			CASE
+				WHEN SUM ( CASE WHEN FD.AcademicYear = @AcademicYear THEN ATT.Possible ELSE 0 END ) = 0 THEN 0
+				ELSE
+					CAST ( SUM ( CASE WHEN FD.AcademicYear = @AcademicYear THEN ATT.Present ELSE 0 END ) AS FLOAT )
+					/
+					CAST ( SUM ( CASE WHEN FD.AcademicYear = @AcademicYear THEN ATT.Possible ELSE 0 END ) AS FLOAT )
+			END
+		, 3 ),
+	CurrentRet = RET.RetInYrPer,
+	LastYearRetSamePoint = 
+		ROUND (
+			CASE
+				WHEN SUM ( CASE WHEN FD.AcademicYear = @LastYear AND FD.ILRReturn = @ILRReturn THEN FD.IsOverallStart ELSE 0 END ) = 0 THEN 0
+				ELSE
+					CAST ( SUM ( CASE WHEN FD.AcademicYear = @LastYear AND FD.ILRReturn = @ILRReturn THEN FD.IsOverallRetainedFunded ELSE 0 END ) AS FLOAT )
+					/
+					CAST ( SUM ( CASE WHEN FD.AcademicYear = @LastYear AND FD.ILRReturn = @ILRReturn THEN FD.IsOverallStart ELSE 0 END ) AS FLOAT )
+			END,
+			3
+		),
+	DiffRet = 
+		RET.RetInYrPer
+		-
+		ROUND (
+			CASE
+				WHEN SUM ( CASE WHEN FD.AcademicYear = @LastYear AND FD.ILRReturn = @ILRReturn THEN FD.IsOverallStart ELSE 0 END ) = 0 THEN 0
+				ELSE
+					CAST ( SUM ( CASE WHEN FD.AcademicYear = @LastYear AND FD.ILRReturn = @ILRReturn THEN FD.IsOverallRetainedFunded ELSE 0 END ) AS FLOAT )
+					/
+					CAST ( SUM ( CASE WHEN FD.AcademicYear = @LastYear AND FD.ILRReturn = @ILRReturn THEN FD.IsOverallStart ELSE 0 END ) AS FLOAT )
+			END,
+			3
+		),
+	NatAvgGFE = TAR.NatTargetGFE / 100,
+	NatAvgAll = TAR.NatTargetALL / 100,
+	CurrentVolume = COUNT ( DISTINCT CASE WHEN FD.AcademicYear = @AcademicYear THEN FD.LearnRefNumber ELSE NULL END ),
+	HighRisk = COUNT ( DISTINCT RSK.StudentRef ),
+	NonAttend = COUNT ( DISTINCT NAT.StudentRef ),
+	ProjectedPass = RET.PassBestCasePer,
+	LastYearFinalVolume = COUNT ( DISTINCT CASE WHEN FD.AcademicYear = @LastYear AND FD.ILRReturn = 'R14' THEN FD.LearnRefNumber ELSE NULL END )
+FROM FIS_FundingData.dbo.FIS_TeamTargets TAR
+LEFT JOIN FIS_FundingData.dbo.FIS_FundingData FD
+	ON FD.ProviderNumber = TAR.ProviderNumber
+LEFT JOIN #Attend ATT
+	ON ATT.StudentRef = FD.LearnRefNumber
+LEFT JOIN #NonAttend NAT
+	ON NAT.StudentRef = FD.LearnRefNumber
+LEFT JOIN #AtRisk RSK
+	ON RSK.StudentRef = FD.LearnRefNumber
+LEFT JOIN #RetAch RET
+	ON RET.EndYear = @LastYear
+	AND RET.Category = TAR.Measure
+LEFT JOIN #RetAch RETL
+	ON RETL.EndYear = @LastYear
+	AND RETL.Category = TAR.Measure
+WHERE
+	FD.AcademicYear &gt;= @LastYear
+	AND FD.AcademicYear &lt;= @AcademicYear
+	AND (
+		FD.ILRReturn = @ILRReturn
+		OR (
+			FD.AcademicYear = @LastYear
+			AND FD.ILRReturn = 'R14'
+			AND FD.ILRReturn &lt;&gt; @ILRReturn
+		)
+	)
+	AND FD.IsFinalReturn = 1
+	AND FD.IsOverallStart = 1
+	AND FD.LearningAimTypeCode = '0003'
+	AND FD.FundLineCategory = '16-19 Funding'
+	AND TAR.Measure = 'GCSE1618'
+GROUP BY
+	RETL.AchPer,
+	TAR.Target,
+	RET.RetInYrPer,
+	TAR.NatTargetGFE,
+	TAR.NatTargetALL,
+	RET.PassBestCasePer</CommandText>
+      </Query>
+      <Fields>
+        <Field Name="AcademicYear">
+          <DataField>AcademicYear</DataField>
+          <rd:TypeName>System.String</rd:TypeName>
+        </Field>
+        <Field Name="LastYear">
+          <DataField>LastYear</DataField>
+          <rd:TypeName>System.String</rd:TypeName>
+        </Field>
+        <Field Name="ILRReturn">
+          <DataField>ILRReturn</DataField>
+          <rd:TypeName>System.String</rd:TypeName>
+        </Field>
+        <Field Name="ILRReturnDate">
+          <DataField>ILRReturnDate</DataField>
+          <rd:TypeName>System.DateTime</rd:TypeName>
+        </Field>
+        <Field Name="Category">
+          <DataField>Category</DataField>
+          <rd:TypeName>System.String</rd:TypeName>
+        </Field>
+        <Field Name="LastYearAch">
+          <DataField>LastYearAch</DataField>
+          <rd:TypeName>System.Double</rd:TypeName>
+        </Field>
+        <Field Name="Target">
+          <DataField>Target</DataField>
+          <rd:TypeName>System.Decimal</rd:TypeName>
+        </Field>
+        <Field Name="AttendPer">
+          <DataField>AttendPer</DataField>
+          <rd:TypeName>System.Double</rd:TypeName>
+        </Field>
+        <Field Name="CurrentRet">
+          <DataField>CurrentRet</DataField>
+          <rd:TypeName>System.Double</rd:TypeName>
+        </Field>
+        <Field Name="LastYearRetSamePoint">
+          <DataField>LastYearRetSamePoint</DataField>
+          <rd:TypeName>System.Double</rd:TypeName>
+        </Field>
+        <Field Name="DiffRet">
+          <DataField>DiffRet</DataField>
+          <rd:TypeName>System.Double</rd:TypeName>
+        </Field>
+        <Field Name="NatAvgGFE">
+          <DataField>NatAvgGFE</DataField>
+          <rd:TypeName>System.Decimal</rd:TypeName>
+        </Field>
+        <Field Name="NatAvgAll">
+          <DataField>NatAvgAll</DataField>
+          <rd:TypeName>System.Decimal</rd:TypeName>
+        </Field>
+        <Field Name="CurrentVolume">
+          <DataField>CurrentVolume</DataField>
+          <rd:TypeName>System.Int32</rd:TypeName>
+        </Field>
+        <Field Name="HighRisk">
+          <DataField>HighRisk</DataField>
+          <rd:TypeName>System.Int32</rd:TypeName>
+        </Field>
+        <Field Name="NonAttend">
+          <DataField>NonAttend</DataField>
+          <rd:TypeName>System.Int32</rd:TypeName>
+        </Field>
+        <Field Name="ProjectedPass">
+          <DataField>ProjectedPass</DataField>
+          <rd:TypeName>System.Double</rd:TypeName>
+        </Field>
+        <Field Name="LastYearFinalVolume">
+          <DataField>LastYearFinalVolume</DataField>
+          <rd:TypeName>System.Int32</rd:TypeName>
+        </Field>
+      </Fields>
+    </DataSet>
+    <DataSet Name="AcademicYear">
+      <Query>
+        <DataSourceName>ProSolution</DataSourceName>
+        <CommandText>SELECT DISTINCT
+	Code = FD.AcademicYear,
+	Description = FD.AcademicYear
+FROM FIS_FundingData.dbo.FIS_FundingData FD
+WHERE
+	FD.IsFinalReturn = 1
+ORDER BY
+	FD.AcademicYear</CommandText>
+      </Query>
+      <Fields>
+        <Field Name="Code">
+          <DataField>Code</DataField>
+          <rd:TypeName>System.String</rd:TypeName>
+        </Field>
+        <Field Name="Description">
+          <DataField>Description</DataField>
+          <rd:TypeName>System.String</rd:TypeName>
+        </Field>
+      </Fields>
+    </DataSet>
+    <DataSet Name="AcademicYearCur">
+      <Query>
+        <DataSourceName>ProSolution</DataSourceName>
+        <CommandText>/*
+DECLARE @AcademicYear VARCHAR(5) = '25/26'
+*/
+
+SET DATEFORMAT ymd
+
+SELECT DISTINCT
+	Code = FD.AcademicYear,
+	Description = FD.AcademicYear
+FROM FIS_FundingData.dbo.FIS_FundingData FD
+WHERE
+	FD.IsFinalReturn = 1
+	AND CAST ( '20' + LEFT ( FD.AcademicYear, 2 ) + '-08-01' AS DATE ) &lt;= CAST ( GetDate() AS DATE )
+	AND CAST ( '20' + RIGHT ( FD.AcademicYear, 2 ) + '-07-31' AS DATE ) &gt;= CAST ( GetDate() AS DATE )
+ORDER BY
+	FD.AcademicYear</CommandText>
+      </Query>
+      <Fields>
+        <Field Name="Code">
+          <DataField>Code</DataField>
+          <rd:TypeName>System.String</rd:TypeName>
+        </Field>
+        <Field Name="Description">
+          <DataField>Description</DataField>
+          <rd:TypeName>System.String</rd:TypeName>
+        </Field>
+      </Fields>
+    </DataSet>
+    <DataSet Name="ILRReturn">
+      <Query>
+        <DataSourceName>ProSolution</DataSourceName>
+        <QueryParameters>
+          <QueryParameter Name="@AcademicYear">
+            <Value>=Parameters!AcademicYear.Value</Value>
+          </QueryParameter>
+        </QueryParameters>
+        <CommandText>/*
+DECLARE @AcademicYear NVARCHAR(5) = '24/25'
+*/
+
+SELECT DISTINCT
+	Code = FD.ILRReturn,
+	Description = FD.ILRReturn
+FROM FIS_FundingData.dbo.FIS_FundingData FD
+WHERE
+	FD.AcademicYear = @AcademicYear
+	AND FD.IsFinalReturn = 1
+ORDER BY
+	FD.ILRReturn</CommandText>
+      </Query>
+      <Fields>
+        <Field Name="Code">
+          <DataField>Code</DataField>
+          <rd:TypeName>System.String</rd:TypeName>
+        </Field>
+        <Field Name="Description">
+          <DataField>Description</DataField>
+          <rd:TypeName>System.String</rd:TypeName>
+        </Field>
+      </Fields>
+    </DataSet>
+    <DataSet Name="ILRReturnDefault">
+      <Query>
+        <DataSourceName>ProSolution</DataSourceName>
+        <QueryParameters>
+          <QueryParameter Name="@AcademicYear">
+            <Value>=Parameters!AcademicYear.Value</Value>
+          </QueryParameter>
+        </QueryParameters>
+        <CommandText>/*
+DECLARE @AcademicYear NVARCHAR(5) = '24/25'
+*/
+
+SELECT
+	Code = MAX ( FD.ILRReturn ),
+	Description = MAX ( FD.ILRReturn )
+FROM FIS_FundingData.dbo.FIS_FundingData FD
+WHERE
+	FD.AcademicYear = @AcademicYear
+	AND FD.IsFinalReturn = 1</CommandText>
+      </Query>
+      <Fields>
+        <Field Name="Code">
+          <DataField>Code</DataField>
+          <rd:TypeName>System.String</rd:TypeName>
+        </Field>
+        <Field Name="Description">
+          <DataField>Description</DataField>
+          <rd:TypeName>System.String</rd:TypeName>
+        </Field>
+      </Fields>
+    </DataSet>
+  </DataSets>
+  <ReportSections>
+    <ReportSection>
+      <Body>
+        <ReportItems>
+          <Tablix Name="Tablix1">
+            <TablixBody>
+              <TablixColumns>
+                <TablixColumn>
+                  <Width>5.01128cm</Width>
+                </TablixColumn>
+                <TablixColumn>
+                  <Width>1.6cm</Width>
+                </TablixColumn>
+                <TablixColumn>
+                  <Width>1.6cm</Width>
+                </TablixColumn>
+                <TablixColumn>
+                  <Width>0.1cm</Width>
+                </TablixColumn>
+                <TablixColumn>
+                  <Width>1.6cm</Width>
+                </TablixColumn>
+                <TablixColumn>
+                  <Width>0.1cm</Width>
+                </TablixColumn>
+                <TablixColumn>
+                  <Width>1.6cm</Width>
+                </TablixColumn>
+                <TablixColumn>
+                  <Width>1.6cm</Width>
+                </TablixColumn>
+                <TablixColumn>
+                  <Width>1.6cm</Width>
+                </TablixColumn>
+                <TablixColumn>
+                  <Width>1.6cm</Width>
+                </TablixColumn>
+                <TablixColumn>
+                  <Width>1.6cm</Width>
+                </TablixColumn>
+                <TablixColumn>
+                  <Width>0.1cm</Width>
+                </TablixColumn>
+                <TablixColumn>
+                  <Width>1.6cm</Width>
+                </TablixColumn>
+                <TablixColumn>
+                  <Width>1.6cm</Width>
+                </TablixColumn>
+                <TablixColumn>
+                  <Width>1.6cm</Width>
+                </TablixColumn>
+                <TablixColumn>
+                  <Width>1.9cm</Width>
+                </TablixColumn>
+                <TablixColumn>
+                  <Width>0.1cm</Width>
+                </TablixColumn>
+                <TablixColumn>
+                  <Width>1.6cm</Width>
+                </TablixColumn>
+              </TablixColumns>
+              <TablixRows>
+                <TablixRow>
+                  <Height>0.6cm</Height>
+                  <TablixCells>
+                    <TablixCell>
+                      <CellContents>
+                        <Textbox Name="Textbox11">
+                          <CanGrow>true</CanGrow>
+                          <KeepTogether>true</KeepTogether>
+                          <Paragraphs>
+                            <Paragraph>
+                              <TextRuns>
+                                <TextRun>
+                                  <Value />
+                                  <Style>
+                                    <FontFamily>Calibri</FontFamily>
+                                    <FontWeight>Bold</FontWeight>
+                                  </Style>
+                                </TextRun>
+                              </TextRuns>
+                              <Style>
+                                <TextAlign>Right</TextAlign>
+                              </Style>
+                            </Paragraph>
+                          </Paragraphs>
+                          <rd:DefaultName>Textbox11</rd:DefaultName>
+                          <Style>
+                            <Border>
+                              <Color>#ffffff</Color>
+                              <Style>Solid</Style>
+                            </Border>
+                            <TopBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </TopBorder>
+                            <BottomBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </BottomBorder>
+                            <LeftBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </LeftBorder>
+                            <RightBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </RightBorder>
+                            <BackgroundColor>#88527a</BackgroundColor>
+                            <PaddingLeft>2pt</PaddingLeft>
+                            <PaddingRight>2pt</PaddingRight>
+                            <PaddingTop>2pt</PaddingTop>
+                            <PaddingBottom>2pt</PaddingBottom>
+                          </Style>
+                        </Textbox>
+                      </CellContents>
+                    </TablixCell>
+                    <TablixCell>
+                      <CellContents>
+                        <Textbox Name="Textbox14">
+                          <CanGrow>true</CanGrow>
+                          <KeepTogether>true</KeepTogether>
+                          <Paragraphs>
+                            <Paragraph>
+                              <TextRuns>
+                                <TextRun>
+                                  <Value>Achievement</Value>
+                                  <Style>
+                                    <FontFamily>Calibri</FontFamily>
+                                    <FontWeight>Bold</FontWeight>
+                                  </Style>
+                                </TextRun>
+                              </TextRuns>
+                              <Style>
+                                <TextAlign>Center</TextAlign>
+                              </Style>
+                            </Paragraph>
+                          </Paragraphs>
+                          <rd:DefaultName>Textbox14</rd:DefaultName>
+                          <Style>
+                            <Border>
+                              <Color>#ffffff</Color>
+                              <Style>Solid</Style>
+                            </Border>
+                            <TopBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </TopBorder>
+                            <BottomBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </BottomBorder>
+                            <LeftBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </LeftBorder>
+                            <RightBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </RightBorder>
+                            <BackgroundColor>#00b0ad</BackgroundColor>
+                            <PaddingLeft>2pt</PaddingLeft>
+                            <PaddingRight>2pt</PaddingRight>
+                            <PaddingTop>2pt</PaddingTop>
+                            <PaddingBottom>2pt</PaddingBottom>
+                          </Style>
+                        </Textbox>
+                        <ColSpan>2</ColSpan>
+                      </CellContents>
+                    </TablixCell>
+                    <TablixCell />
+                    <TablixCell>
+                      <CellContents>
+                        <Textbox Name="Textbox187">
+                          <KeepTogether>true</KeepTogether>
+                          <Paragraphs>
+                            <Paragraph>
+                              <TextRuns>
+                                <TextRun>
+                                  <Value />
+                                  <Style>
+                                    <FontFamily>Calibri</FontFamily>
+                                    <FontWeight>Bold</FontWeight>
+                                  </Style>
+                                </TextRun>
+                              </TextRuns>
+                              <Style>
+                                <TextAlign>Center</TextAlign>
+                              </Style>
+                            </Paragraph>
+                          </Paragraphs>
+                          <rd:DefaultName>Textbox187</rd:DefaultName>
+                          <Style>
+                            <Border>
+                              <Color>#ffffff</Color>
+                              <Style>Solid</Style>
+                            </Border>
+                            <TopBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </TopBorder>
+                            <BottomBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </BottomBorder>
+                            <LeftBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </LeftBorder>
+                            <RightBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </RightBorder>
+                            <BackgroundColor>#00b0ad</BackgroundColor>
+                            <PaddingLeft>2pt</PaddingLeft>
+                            <PaddingRight>2pt</PaddingRight>
+                            <PaddingTop>2pt</PaddingTop>
+                            <PaddingBottom>2pt</PaddingBottom>
+                          </Style>
+                        </Textbox>
+                      </CellContents>
+                    </TablixCell>
+                    <TablixCell>
+                      <CellContents>
+                        <Textbox Name="Textbox20">
+                          <CanGrow>true</CanGrow>
+                          <KeepTogether>true</KeepTogether>
+                          <Paragraphs>
+                            <Paragraph>
+                              <TextRuns>
+                                <TextRun>
+                                  <Value>Attend</Value>
+                                  <Style>
+                                    <FontFamily>Calibri</FontFamily>
+                                    <FontWeight>Bold</FontWeight>
+                                  </Style>
+                                </TextRun>
+                              </TextRuns>
+                              <Style>
+                                <TextAlign>Center</TextAlign>
+                              </Style>
+                            </Paragraph>
+                          </Paragraphs>
+                          <rd:DefaultName>Textbox20</rd:DefaultName>
+                          <Style>
+                            <Border>
+                              <Color>#ffffff</Color>
+                              <Style>Solid</Style>
+                            </Border>
+                            <TopBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </TopBorder>
+                            <BottomBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </BottomBorder>
+                            <LeftBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </LeftBorder>
+                            <RightBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </RightBorder>
+                            <BackgroundColor>#00b0ad</BackgroundColor>
+                            <PaddingLeft>2pt</PaddingLeft>
+                            <PaddingRight>2pt</PaddingRight>
+                            <PaddingTop>2pt</PaddingTop>
+                            <PaddingBottom>2pt</PaddingBottom>
+                          </Style>
+                        </Textbox>
+                      </CellContents>
+                    </TablixCell>
+                    <TablixCell>
+                      <CellContents>
+                        <Textbox Name="Textbox182">
+                          <KeepTogether>true</KeepTogether>
+                          <Paragraphs>
+                            <Paragraph>
+                              <TextRuns>
+                                <TextRun>
+                                  <Value />
+                                  <Style>
+                                    <FontFamily>Calibri</FontFamily>
+                                    <FontWeight>Bold</FontWeight>
+                                  </Style>
+                                </TextRun>
+                              </TextRuns>
+                              <Style>
+                                <TextAlign>Center</TextAlign>
+                              </Style>
+                            </Paragraph>
+                          </Paragraphs>
+                          <rd:DefaultName>Textbox182</rd:DefaultName>
+                          <Style>
+                            <Border>
+                              <Color>#ffffff</Color>
+                              <Style>Solid</Style>
+                            </Border>
+                            <TopBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </TopBorder>
+                            <BottomBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </BottomBorder>
+                            <LeftBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </LeftBorder>
+                            <RightBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </RightBorder>
+                            <BackgroundColor>#00b0ad</BackgroundColor>
+                            <PaddingLeft>2pt</PaddingLeft>
+                            <PaddingRight>2pt</PaddingRight>
+                            <PaddingTop>2pt</PaddingTop>
+                            <PaddingBottom>2pt</PaddingBottom>
+                          </Style>
+                        </Textbox>
+                      </CellContents>
+                    </TablixCell>
+                    <TablixCell>
+                      <CellContents>
+                        <Textbox Name="Textbox23">
+                          <CanGrow>true</CanGrow>
+                          <KeepTogether>true</KeepTogether>
+                          <Paragraphs>
+                            <Paragraph>
+                              <TextRuns>
+                                <TextRun>
+                                  <Value>Retention</Value>
+                                  <Style>
+                                    <FontFamily>Calibri</FontFamily>
+                                    <FontWeight>Bold</FontWeight>
+                                  </Style>
+                                </TextRun>
+                              </TextRuns>
+                              <Style>
+                                <TextAlign>Center</TextAlign>
+                              </Style>
+                            </Paragraph>
+                          </Paragraphs>
+                          <rd:DefaultName>Textbox23</rd:DefaultName>
+                          <Style>
+                            <Border>
+                              <Color>#ffffff</Color>
+                              <Style>Solid</Style>
+                            </Border>
+                            <TopBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </TopBorder>
+                            <BottomBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </BottomBorder>
+                            <LeftBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </LeftBorder>
+                            <RightBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </RightBorder>
+                            <BackgroundColor>#00b0ad</BackgroundColor>
+                            <PaddingLeft>2pt</PaddingLeft>
+                            <PaddingRight>2pt</PaddingRight>
+                            <PaddingTop>2pt</PaddingTop>
+                            <PaddingBottom>2pt</PaddingBottom>
+                          </Style>
+                        </Textbox>
+                        <ColSpan>5</ColSpan>
+                      </CellContents>
+                    </TablixCell>
+                    <TablixCell />
+                    <TablixCell />
+                    <TablixCell />
+                    <TablixCell />
+                    <TablixCell>
+                      <CellContents>
+                        <Textbox Name="Textbox172">
+                          <KeepTogether>true</KeepTogether>
+                          <Paragraphs>
+                            <Paragraph>
+                              <TextRuns>
+                                <TextRun>
+                                  <Value />
+                                  <Style>
+                                    <FontFamily>Calibri</FontFamily>
+                                    <FontWeight>Bold</FontWeight>
+                                  </Style>
+                                </TextRun>
+                              </TextRuns>
+                              <Style>
+                                <TextAlign>Center</TextAlign>
+                              </Style>
+                            </Paragraph>
+                          </Paragraphs>
+                          <rd:DefaultName>Textbox172</rd:DefaultName>
+                          <Style>
+                            <Border>
+                              <Color>#ffffff</Color>
+                              <Style>Solid</Style>
+                            </Border>
+                            <TopBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </TopBorder>
+                            <BottomBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </BottomBorder>
+                            <LeftBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </LeftBorder>
+                            <RightBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </RightBorder>
+                            <BackgroundColor>#00b0ad</BackgroundColor>
+                            <PaddingLeft>2pt</PaddingLeft>
+                            <PaddingRight>2pt</PaddingRight>
+                            <PaddingTop>2pt</PaddingTop>
+                            <PaddingBottom>2pt</PaddingBottom>
+                          </Style>
+                        </Textbox>
+                      </CellContents>
+                    </TablixCell>
+                    <TablixCell>
+                      <CellContents>
+                        <Textbox Name="Textbox38">
+                          <CanGrow>true</CanGrow>
+                          <KeepTogether>true</KeepTogether>
+                          <Paragraphs>
+                            <Paragraph>
+                              <TextRuns>
+                                <TextRun>
+                                  <Value>Learners</Value>
+                                  <Style>
+                                    <FontFamily>Calibri</FontFamily>
+                                    <FontWeight>Bold</FontWeight>
+                                  </Style>
+                                </TextRun>
+                              </TextRuns>
+                              <Style>
+                                <TextAlign>Center</TextAlign>
+                              </Style>
+                            </Paragraph>
+                          </Paragraphs>
+                          <rd:DefaultName>Textbox38</rd:DefaultName>
+                          <Style>
+                            <Border>
+                              <Color>#ffffff</Color>
+                              <Style>Solid</Style>
+                            </Border>
+                            <TopBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </TopBorder>
+                            <BottomBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </BottomBorder>
+                            <LeftBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </LeftBorder>
+                            <RightBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </RightBorder>
+                            <BackgroundColor>#00b0ad</BackgroundColor>
+                            <PaddingLeft>2pt</PaddingLeft>
+                            <PaddingRight>2pt</PaddingRight>
+                            <PaddingTop>2pt</PaddingTop>
+                            <PaddingBottom>2pt</PaddingBottom>
+                          </Style>
+                        </Textbox>
+                        <ColSpan>4</ColSpan>
+                      </CellContents>
+                    </TablixCell>
+                    <TablixCell />
+                    <TablixCell />
+                    <TablixCell />
+                    <TablixCell>
+                      <CellContents>
+                        <Textbox Name="Textbox177">
+                          <KeepTogether>true</KeepTogether>
+                          <Paragraphs>
+                            <Paragraph>
+                              <TextRuns>
+                                <TextRun>
+                                  <Value />
+                                  <Style>
+                                    <FontFamily>Calibri</FontFamily>
+                                    <FontWeight>Bold</FontWeight>
+                                  </Style>
+                                </TextRun>
+                              </TextRuns>
+                              <Style>
+                                <TextAlign>Center</TextAlign>
+                              </Style>
+                            </Paragraph>
+                          </Paragraphs>
+                          <rd:DefaultName>Textbox177</rd:DefaultName>
+                          <Style>
+                            <Border>
+                              <Color>#ffffff</Color>
+                              <Style>Solid</Style>
+                            </Border>
+                            <TopBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </TopBorder>
+                            <BottomBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </BottomBorder>
+                            <LeftBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </LeftBorder>
+                            <RightBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </RightBorder>
+                            <BackgroundColor>#00b0ad</BackgroundColor>
+                            <PaddingLeft>2pt</PaddingLeft>
+                            <PaddingRight>2pt</PaddingRight>
+                            <PaddingTop>2pt</PaddingTop>
+                            <PaddingBottom>2pt</PaddingBottom>
+                          </Style>
+                        </Textbox>
+                      </CellContents>
+                    </TablixCell>
+                    <TablixCell>
+                      <CellContents>
+                        <Textbox Name="Textbox47">
+                          <CanGrow>true</CanGrow>
+                          <KeepTogether>true</KeepTogether>
+                          <Paragraphs>
+                            <Paragraph>
+                              <TextRuns>
+                                <TextRun>
+                                  <Value>Pass</Value>
+                                  <Style>
+                                    <FontFamily>Calibri</FontFamily>
+                                    <FontWeight>Bold</FontWeight>
+                                  </Style>
+                                </TextRun>
+                              </TextRuns>
+                              <Style>
+                                <TextAlign>Center</TextAlign>
+                              </Style>
+                            </Paragraph>
+                          </Paragraphs>
+                          <rd:DefaultName>Textbox47</rd:DefaultName>
+                          <Style>
+                            <Border>
+                              <Color>#ffffff</Color>
+                              <Style>Solid</Style>
+                            </Border>
+                            <TopBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </TopBorder>
+                            <BottomBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </BottomBorder>
+                            <LeftBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </LeftBorder>
+                            <RightBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </RightBorder>
+                            <BackgroundColor>#00b0ad</BackgroundColor>
+                            <PaddingLeft>2pt</PaddingLeft>
+                            <PaddingRight>2pt</PaddingRight>
+                            <PaddingTop>2pt</PaddingTop>
+                            <PaddingBottom>2pt</PaddingBottom>
+                          </Style>
+                        </Textbox>
+                      </CellContents>
+                    </TablixCell>
+                  </TablixCells>
+                </TablixRow>
+                <TablixRow>
+                  <Height>0.9175cm</Height>
+                  <TablixCells>
+                    <TablixCell>
+                      <CellContents>
+                        <Textbox Name="Textbox12">
+                          <CanGrow>true</CanGrow>
+                          <KeepTogether>true</KeepTogether>
+                          <Paragraphs>
+                            <Paragraph>
+                              <TextRuns>
+                                <TextRun>
+                                  <Value>Category</Value>
+                                  <Style>
+                                    <FontFamily>Calibri</FontFamily>
+                                    <FontWeight>Bold</FontWeight>
+                                    <Color>White</Color>
+                                  </Style>
+                                </TextRun>
+                              </TextRuns>
+                              <Style />
+                            </Paragraph>
+                          </Paragraphs>
+                          <rd:DefaultName>Textbox12</rd:DefaultName>
+                          <Style>
+                            <Border>
+                              <Color>#ffffff</Color>
+                              <Style>Solid</Style>
+                            </Border>
+                            <TopBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </TopBorder>
+                            <BottomBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </BottomBorder>
+                            <LeftBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </LeftBorder>
+                            <RightBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </RightBorder>
+                            <BackgroundColor>#88527a</BackgroundColor>
+                            <VerticalAlign>Bottom</VerticalAlign>
+                            <PaddingLeft>2pt</PaddingLeft>
+                            <PaddingRight>2pt</PaddingRight>
+                            <PaddingTop>2pt</PaddingTop>
+                            <PaddingBottom>2pt</PaddingBottom>
+                          </Style>
+                        </Textbox>
+                      </CellContents>
+                    </TablixCell>
+                    <TablixCell>
+                      <CellContents>
+                        <Textbox Name="Textbox15">
+                          <CanGrow>true</CanGrow>
+                          <KeepTogether>true</KeepTogether>
+                          <Paragraphs>
+                            <Paragraph>
+                              <TextRuns>
+                                <TextRun>
+                                  <Value>=Fields!LastYear.Value</Value>
+                                  <Style>
+                                    <FontFamily>Calibri</FontFamily>
+                                    <FontWeight>Bold</FontWeight>
+                                    <Color>LightGrey</Color>
+                                  </Style>
+                                </TextRun>
+                                <TextRun>
+                                  <Value> Year End</Value>
+                                  <Style>
+                                    <FontFamily>Calibri</FontFamily>
+                                    <FontWeight>Bold</FontWeight>
+                                    <Color>LightGrey</Color>
+                                  </Style>
+                                </TextRun>
+                              </TextRuns>
+                              <Style>
+                                <TextAlign>Center</TextAlign>
+                              </Style>
+                            </Paragraph>
+                          </Paragraphs>
+                          <rd:DefaultName>Textbox15</rd:DefaultName>
+                          <Style>
+                            <Border>
+                              <Color>#ffffff</Color>
+                              <Style>Solid</Style>
+                            </Border>
+                            <TopBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </TopBorder>
+                            <BottomBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </BottomBorder>
+                            <LeftBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </LeftBorder>
+                            <RightBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </RightBorder>
+                            <BackgroundColor>#88527a</BackgroundColor>
+                            <VerticalAlign>Bottom</VerticalAlign>
+                            <PaddingLeft>2pt</PaddingLeft>
+                            <PaddingRight>2pt</PaddingRight>
+                            <PaddingTop>2pt</PaddingTop>
+                            <PaddingBottom>2pt</PaddingBottom>
+                          </Style>
+                        </Textbox>
+                      </CellContents>
+                    </TablixCell>
+                    <TablixCell>
+                      <CellContents>
+                        <Textbox Name="Textbox18">
+                          <CanGrow>true</CanGrow>
+                          <KeepTogether>true</KeepTogether>
+                          <Paragraphs>
+                            <Paragraph>
+                              <TextRuns>
+                                <TextRun>
+                                  <Value>=Fields!AcademicYear.Value</Value>
+                                  <Style>
+                                    <FontFamily>Calibri</FontFamily>
+                                    <FontWeight>Bold</FontWeight>
+                                    <Color>White</Color>
+                                  </Style>
+                                </TextRun>
+                                <TextRun>
+                                  <Value> Target</Value>
+                                  <Style>
+                                    <FontFamily>Calibri</FontFamily>
+                                    <FontWeight>Bold</FontWeight>
+                                    <Color>White</Color>
+                                  </Style>
+                                </TextRun>
+                              </TextRuns>
+                              <Style>
+                                <TextAlign>Center</TextAlign>
+                              </Style>
+                            </Paragraph>
+                          </Paragraphs>
+                          <rd:DefaultName>Textbox18</rd:DefaultName>
+                          <Style>
+                            <Border>
+                              <Color>#ffffff</Color>
+                              <Style>Solid</Style>
+                            </Border>
+                            <TopBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </TopBorder>
+                            <BottomBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </BottomBorder>
+                            <LeftBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </LeftBorder>
+                            <RightBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </RightBorder>
+                            <BackgroundColor>#88527a</BackgroundColor>
+                            <VerticalAlign>Bottom</VerticalAlign>
+                            <PaddingLeft>2pt</PaddingLeft>
+                            <PaddingRight>2pt</PaddingRight>
+                            <PaddingTop>2pt</PaddingTop>
+                            <PaddingBottom>2pt</PaddingBottom>
+                          </Style>
+                        </Textbox>
+                      </CellContents>
+                    </TablixCell>
+                    <TablixCell>
+                      <CellContents>
+                        <Textbox Name="Textbox190">
+                          <KeepTogether>true</KeepTogether>
+                          <Paragraphs>
+                            <Paragraph>
+                              <TextRuns>
+                                <TextRun>
+                                  <Value />
+                                  <Style>
+                                    <FontFamily>Calibri</FontFamily>
+                                    <FontWeight>Bold</FontWeight>
+                                  </Style>
+                                </TextRun>
+                              </TextRuns>
+                              <Style>
+                                <TextAlign>Center</TextAlign>
+                              </Style>
+                            </Paragraph>
+                          </Paragraphs>
+                          <rd:DefaultName>Textbox187</rd:DefaultName>
+                          <Style>
+                            <Border>
+                              <Color>#ffffff</Color>
+                              <Style>Solid</Style>
+                            </Border>
+                            <TopBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </TopBorder>
+                            <BottomBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </BottomBorder>
+                            <LeftBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </LeftBorder>
+                            <RightBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </RightBorder>
+                            <BackgroundColor>#00b0ad</BackgroundColor>
+                            <PaddingLeft>2pt</PaddingLeft>
+                            <PaddingRight>2pt</PaddingRight>
+                            <PaddingTop>2pt</PaddingTop>
+                            <PaddingBottom>2pt</PaddingBottom>
+                          </Style>
+                        </Textbox>
+                      </CellContents>
+                    </TablixCell>
+                    <TablixCell>
+                      <CellContents>
+                        <Textbox Name="Textbox21">
+                          <CanGrow>true</CanGrow>
+                          <KeepTogether>true</KeepTogether>
+                          <Paragraphs>
+                            <Paragraph>
+                              <TextRuns>
+                                <TextRun>
+                                  <Value>=Fields!AcademicYear.Value</Value>
+                                  <Style>
+                                    <FontFamily>Calibri</FontFamily>
+                                    <FontWeight>Bold</FontWeight>
+                                    <Color>White</Color>
+                                  </Style>
+                                </TextRun>
+                              </TextRuns>
+                              <Style>
+                                <TextAlign>Center</TextAlign>
+                              </Style>
+                            </Paragraph>
+                          </Paragraphs>
+                          <rd:DefaultName>Textbox21</rd:DefaultName>
+                          <Style>
+                            <Border>
+                              <Color>#ffffff</Color>
+                              <Style>Solid</Style>
+                            </Border>
+                            <TopBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </TopBorder>
+                            <BottomBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </BottomBorder>
+                            <LeftBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </LeftBorder>
+                            <RightBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </RightBorder>
+                            <BackgroundColor>#88527a</BackgroundColor>
+                            <VerticalAlign>Bottom</VerticalAlign>
+                            <PaddingLeft>2pt</PaddingLeft>
+                            <PaddingRight>2pt</PaddingRight>
+                            <PaddingTop>2pt</PaddingTop>
+                            <PaddingBottom>2pt</PaddingBottom>
+                          </Style>
+                        </Textbox>
+                      </CellContents>
+                    </TablixCell>
+                    <TablixCell>
+                      <CellContents>
+                        <Textbox Name="Textbox185">
+                          <KeepTogether>true</KeepTogether>
+                          <Paragraphs>
+                            <Paragraph>
+                              <TextRuns>
+                                <TextRun>
+                                  <Value />
+                                  <Style>
+                                    <FontFamily>Calibri</FontFamily>
+                                    <FontWeight>Bold</FontWeight>
+                                  </Style>
+                                </TextRun>
+                              </TextRuns>
+                              <Style>
+                                <TextAlign>Center</TextAlign>
+                              </Style>
+                            </Paragraph>
+                          </Paragraphs>
+                          <rd:DefaultName>Textbox182</rd:DefaultName>
+                          <Style>
+                            <Border>
+                              <Color>#ffffff</Color>
+                              <Style>Solid</Style>
+                            </Border>
+                            <TopBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </TopBorder>
+                            <BottomBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </BottomBorder>
+                            <LeftBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </LeftBorder>
+                            <RightBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </RightBorder>
+                            <BackgroundColor>#00b0ad</BackgroundColor>
+                            <PaddingLeft>2pt</PaddingLeft>
+                            <PaddingRight>2pt</PaddingRight>
+                            <PaddingTop>2pt</PaddingTop>
+                            <PaddingBottom>2pt</PaddingBottom>
+                          </Style>
+                        </Textbox>
+                      </CellContents>
+                    </TablixCell>
+                    <TablixCell>
+                      <CellContents>
+                        <Textbox Name="Textbox34">
+                          <CanGrow>true</CanGrow>
+                          <KeepTogether>true</KeepTogether>
+                          <Paragraphs>
+                            <Paragraph>
+                              <TextRuns>
+                                <TextRun>
+                                  <Value>=Fields!LastYear.Value</Value>
+                                  <Style>
+                                    <FontFamily>Calibri</FontFamily>
+                                    <FontWeight>Bold</FontWeight>
+                                    <Color>LightGrey</Color>
+                                  </Style>
+                                </TextRun>
+                                <TextRun>
+                                  <Value xml:space="preserve"> </Value>
+                                  <Style>
+                                    <FontFamily>Calibri</FontFamily>
+                                    <FontWeight>Bold</FontWeight>
+                                    <Color>LightGrey</Color>
+                                  </Style>
+                                </TextRun>
+                                <TextRun>
+                                  <Value>=Fields!ILRReturn.Value</Value>
+                                  <Style>
+                                    <FontFamily>Calibri</FontFamily>
+                                    <FontWeight>Bold</FontWeight>
+                                    <Color>LightGrey</Color>
+                                  </Style>
+                                </TextRun>
+                              </TextRuns>
+                              <Style>
+                                <TextAlign>Center</TextAlign>
+                              </Style>
+                            </Paragraph>
+                          </Paragraphs>
+                          <rd:DefaultName>Textbox24</rd:DefaultName>
+                          <Style>
+                            <Border>
+                              <Color>#ffffff</Color>
+                              <Style>Solid</Style>
+                            </Border>
+                            <TopBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </TopBorder>
+                            <BottomBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </BottomBorder>
+                            <LeftBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </LeftBorder>
+                            <RightBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </RightBorder>
+                            <BackgroundColor>#88527a</BackgroundColor>
+                            <VerticalAlign>Bottom</VerticalAlign>
+                            <PaddingLeft>2pt</PaddingLeft>
+                            <PaddingRight>2pt</PaddingRight>
+                            <PaddingTop>2pt</PaddingTop>
+                            <PaddingBottom>2pt</PaddingBottom>
+                          </Style>
+                        </Textbox>
+                      </CellContents>
+                    </TablixCell>
+                    <TablixCell>
+                      <CellContents>
+                        <Textbox Name="Textbox29">
+                          <CanGrow>true</CanGrow>
+                          <KeepTogether>true</KeepTogether>
+                          <Paragraphs>
+                            <Paragraph>
+                              <TextRuns>
+                                <TextRun>
+                                  <Value>=Fields!AcademicYear.Value</Value>
+                                  <Style>
+                                    <FontFamily>Calibri</FontFamily>
+                                    <FontWeight>Bold</FontWeight>
+                                    <Color>White</Color>
+                                  </Style>
+                                </TextRun>
+                                <TextRun>
+                                  <Value xml:space="preserve"> </Value>
+                                  <Style>
+                                    <FontFamily>Calibri</FontFamily>
+                                    <FontWeight>Bold</FontWeight>
+                                    <Color>White</Color>
+                                  </Style>
+                                </TextRun>
+                                <TextRun>
+                                  <Value>=Fields!ILRReturn.Value</Value>
+                                  <Style>
+                                    <FontFamily>Calibri</FontFamily>
+                                    <FontWeight>Bold</FontWeight>
+                                    <Color>White</Color>
+                                  </Style>
+                                </TextRun>
+                              </TextRuns>
+                              <Style>
+                                <TextAlign>Center</TextAlign>
+                              </Style>
+                            </Paragraph>
+                          </Paragraphs>
+                          <rd:DefaultName>Textbox24</rd:DefaultName>
+                          <Style>
+                            <Border>
+                              <Color>#ffffff</Color>
+                              <Style>Solid</Style>
+                            </Border>
+                            <TopBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </TopBorder>
+                            <BottomBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </BottomBorder>
+                            <LeftBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </LeftBorder>
+                            <RightBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </RightBorder>
+                            <BackgroundColor>#88527a</BackgroundColor>
+                            <VerticalAlign>Bottom</VerticalAlign>
+                            <PaddingLeft>2pt</PaddingLeft>
+                            <PaddingRight>2pt</PaddingRight>
+                            <PaddingTop>2pt</PaddingTop>
+                            <PaddingBottom>2pt</PaddingBottom>
+                          </Style>
+                        </Textbox>
+                      </CellContents>
+                    </TablixCell>
+                    <TablixCell>
+                      <CellContents>
+                        <Textbox Name="Textbox30">
+                          <CanGrow>true</CanGrow>
+                          <KeepTogether>true</KeepTogether>
+                          <Paragraphs>
+                            <Paragraph>
+                              <TextRuns>
+                                <TextRun>
+                                  <Value>Diff</Value>
+                                  <Style>
+                                    <FontFamily>Calibri</FontFamily>
+                                    <FontWeight>Bold</FontWeight>
+                                    <Color>White</Color>
+                                  </Style>
+                                </TextRun>
+                              </TextRuns>
+                              <Style>
+                                <TextAlign>Center</TextAlign>
+                              </Style>
+                            </Paragraph>
+                          </Paragraphs>
+                          <rd:DefaultName>Textbox30</rd:DefaultName>
+                          <Style>
+                            <Border>
+                              <Color>#ffffff</Color>
+                              <Style>Solid</Style>
+                            </Border>
+                            <TopBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </TopBorder>
+                            <BottomBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </BottomBorder>
+                            <LeftBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </LeftBorder>
+                            <RightBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </RightBorder>
+                            <BackgroundColor>#88527a</BackgroundColor>
+                            <VerticalAlign>Bottom</VerticalAlign>
+                            <PaddingLeft>2pt</PaddingLeft>
+                            <PaddingRight>2pt</PaddingRight>
+                            <PaddingTop>2pt</PaddingTop>
+                            <PaddingBottom>2pt</PaddingBottom>
+                          </Style>
+                        </Textbox>
+                      </CellContents>
+                    </TablixCell>
+                    <TablixCell>
+                      <CellContents>
+                        <Textbox Name="Textbox33">
+                          <CanGrow>true</CanGrow>
+                          <KeepTogether>true</KeepTogether>
+                          <Paragraphs>
+                            <Paragraph>
+                              <TextRuns>
+                                <TextRun>
+                                  <Value>Nat Avg GFE</Value>
+                                  <Style>
+                                    <FontFamily>Calibri</FontFamily>
+                                    <FontWeight>Bold</FontWeight>
+                                    <Color>White</Color>
+                                  </Style>
+                                </TextRun>
+                              </TextRuns>
+                              <Style>
+                                <TextAlign>Center</TextAlign>
+                              </Style>
+                            </Paragraph>
+                          </Paragraphs>
+                          <rd:DefaultName>Textbox33</rd:DefaultName>
+                          <Style>
+                            <Border>
+                              <Color>#ffffff</Color>
+                              <Style>Solid</Style>
+                            </Border>
+                            <TopBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </TopBorder>
+                            <BottomBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </BottomBorder>
+                            <LeftBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </LeftBorder>
+                            <RightBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </RightBorder>
+                            <BackgroundColor>#88527a</BackgroundColor>
+                            <VerticalAlign>Bottom</VerticalAlign>
+                            <PaddingLeft>2pt</PaddingLeft>
+                            <PaddingRight>2pt</PaddingRight>
+                            <PaddingTop>2pt</PaddingTop>
+                            <PaddingBottom>2pt</PaddingBottom>
+                          </Style>
+                        </Textbox>
+                      </CellContents>
+                    </TablixCell>
+                    <TablixCell>
+                      <CellContents>
+                        <Textbox Name="Textbox36">
+                          <CanGrow>true</CanGrow>
+                          <KeepTogether>true</KeepTogether>
+                          <Paragraphs>
+                            <Paragraph>
+                              <TextRuns>
+                                <TextRun>
+                                  <Value>Nat Avg All</Value>
+                                  <Style>
+                                    <FontFamily>Calibri</FontFamily>
+                                    <FontWeight>Bold</FontWeight>
+                                    <Color>White</Color>
+                                  </Style>
+                                </TextRun>
+                              </TextRuns>
+                              <Style>
+                                <TextAlign>Center</TextAlign>
+                              </Style>
+                            </Paragraph>
+                          </Paragraphs>
+                          <rd:DefaultName>Textbox36</rd:DefaultName>
+                          <Style>
+                            <Border>
+                              <Color>#ffffff</Color>
+                              <Style>Solid</Style>
+                            </Border>
+                            <TopBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </TopBorder>
+                            <BottomBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </BottomBorder>
+                            <LeftBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </LeftBorder>
+                            <RightBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </RightBorder>
+                            <BackgroundColor>#88527a</BackgroundColor>
+                            <VerticalAlign>Bottom</VerticalAlign>
+                            <PaddingLeft>2pt</PaddingLeft>
+                            <PaddingRight>2pt</PaddingRight>
+                            <PaddingTop>2pt</PaddingTop>
+                            <PaddingBottom>2pt</PaddingBottom>
+                          </Style>
+                        </Textbox>
+                      </CellContents>
+                    </TablixCell>
+                    <TablixCell>
+                      <CellContents>
+                        <Textbox Name="Textbox175">
+                          <KeepTogether>true</KeepTogether>
+                          <Paragraphs>
+                            <Paragraph>
+                              <TextRuns>
+                                <TextRun>
+                                  <Value />
+                                  <Style>
+                                    <FontFamily>Calibri</FontFamily>
+                                    <FontWeight>Bold</FontWeight>
+                                  </Style>
+                                </TextRun>
+                              </TextRuns>
+                              <Style>
+                                <TextAlign>Center</TextAlign>
+                              </Style>
+                            </Paragraph>
+                          </Paragraphs>
+                          <rd:DefaultName>Textbox172</rd:DefaultName>
+                          <Style>
+                            <Border>
+                              <Color>#ffffff</Color>
+                              <Style>Solid</Style>
+                            </Border>
+                            <TopBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </TopBorder>
+                            <BottomBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </BottomBorder>
+                            <LeftBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </LeftBorder>
+                            <RightBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </RightBorder>
+                            <BackgroundColor>#00b0ad</BackgroundColor>
+                            <PaddingLeft>2pt</PaddingLeft>
+                            <PaddingRight>2pt</PaddingRight>
+                            <PaddingTop>2pt</PaddingTop>
+                            <PaddingBottom>2pt</PaddingBottom>
+                          </Style>
+                        </Textbox>
+                      </CellContents>
+                    </TablixCell>
+                    <TablixCell>
+                      <CellContents>
+                        <Textbox Name="Textbox39">
+                          <CanGrow>true</CanGrow>
+                          <KeepTogether>true</KeepTogether>
+                          <Paragraphs>
+                            <Paragraph>
+                              <TextRuns>
+                                <TextRun>
+                                  <Value>=Fields!LastYear.Value</Value>
+                                  <Style>
+                                    <FontFamily>Calibri</FontFamily>
+                                    <FontWeight>Bold</FontWeight>
+                                    <Color>LightGrey</Color>
+                                  </Style>
+                                </TextRun>
+                                <TextRun>
+                                  <Value> Year End</Value>
+                                  <Style>
+                                    <FontFamily>Calibri</FontFamily>
+                                    <FontWeight>Bold</FontWeight>
+                                    <Color>LightGrey</Color>
+                                  </Style>
+                                </TextRun>
+                              </TextRuns>
+                              <Style>
+                                <TextAlign>Center</TextAlign>
+                              </Style>
+                            </Paragraph>
+                          </Paragraphs>
+                          <rd:DefaultName>Textbox39</rd:DefaultName>
+                          <Style>
+                            <Border>
+                              <Color>#ffffff</Color>
+                              <Style>Solid</Style>
+                            </Border>
+                            <BackgroundColor>#88527a</BackgroundColor>
+                            <VerticalAlign>Bottom</VerticalAlign>
+                            <PaddingLeft>2pt</PaddingLeft>
+                            <PaddingRight>2pt</PaddingRight>
+                            <PaddingTop>2pt</PaddingTop>
+                            <PaddingBottom>2pt</PaddingBottom>
+                          </Style>
+                        </Textbox>
+                      </CellContents>
+                    </TablixCell>
+                    <TablixCell>
+                      <CellContents>
+                        <Textbox Name="Textbox43">
+                          <CanGrow>true</CanGrow>
+                          <KeepTogether>true</KeepTogether>
+                          <Paragraphs>
+                            <Paragraph>
+                              <TextRuns>
+                                <TextRun>
+                                  <Value>=Fields!AcademicYear.Value</Value>
+                                  <Style>
+                                    <FontFamily>Calibri</FontFamily>
+                                    <FontWeight>Bold</FontWeight>
+                                    <Color>White</Color>
+                                  </Style>
+                                </TextRun>
+                                <TextRun>
+                                  <Value xml:space="preserve"> </Value>
+                                  <Style>
+                                    <FontFamily>Calibri</FontFamily>
+                                    <FontWeight>Bold</FontWeight>
+                                    <Color>White</Color>
+                                  </Style>
+                                </TextRun>
+                                <TextRun>
+                                  <Value>=Fields!ILRReturn.Value</Value>
+                                  <Style>
+                                    <FontFamily>Calibri</FontFamily>
+                                    <FontWeight>Bold</FontWeight>
+                                    <Color>White</Color>
+                                  </Style>
+                                </TextRun>
+                              </TextRuns>
+                              <Style>
+                                <TextAlign>Center</TextAlign>
+                              </Style>
+                            </Paragraph>
+                          </Paragraphs>
+                          <rd:DefaultName>Textbox39</rd:DefaultName>
+                          <Style>
+                            <Border>
+                              <Color>#ffffff</Color>
+                              <Style>Solid</Style>
+                            </Border>
+                            <BackgroundColor>#88527a</BackgroundColor>
+                            <VerticalAlign>Bottom</VerticalAlign>
+                            <PaddingLeft>2pt</PaddingLeft>
+                            <PaddingRight>2pt</PaddingRight>
+                            <PaddingTop>2pt</PaddingTop>
+                            <PaddingBottom>2pt</PaddingBottom>
+                          </Style>
+                        </Textbox>
+                      </CellContents>
+                    </TablixCell>
+                    <TablixCell>
+                      <CellContents>
+                        <Textbox Name="Textbox42">
+                          <CanGrow>true</CanGrow>
+                          <KeepTogether>true</KeepTogether>
+                          <Paragraphs>
+                            <Paragraph>
+                              <TextRuns>
+                                <TextRun>
+                                  <Value>High Risk</Value>
+                                  <Style>
+                                    <FontFamily>Calibri</FontFamily>
+                                    <FontWeight>Bold</FontWeight>
+                                    <Color>White</Color>
+                                  </Style>
+                                </TextRun>
+                              </TextRuns>
+                              <Style>
+                                <TextAlign>Center</TextAlign>
+                              </Style>
+                            </Paragraph>
+                          </Paragraphs>
+                          <rd:DefaultName>Textbox42</rd:DefaultName>
+                          <Style>
+                            <Border>
+                              <Color>#ffffff</Color>
+                              <Style>Solid</Style>
+                            </Border>
+                            <TopBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </TopBorder>
+                            <BottomBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </BottomBorder>
+                            <LeftBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </LeftBorder>
+                            <RightBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </RightBorder>
+                            <BackgroundColor>#88527a</BackgroundColor>
+                            <VerticalAlign>Bottom</VerticalAlign>
+                            <PaddingLeft>2pt</PaddingLeft>
+                            <PaddingRight>2pt</PaddingRight>
+                            <PaddingTop>2pt</PaddingTop>
+                            <PaddingBottom>2pt</PaddingBottom>
+                          </Style>
+                        </Textbox>
+                      </CellContents>
+                    </TablixCell>
+                    <TablixCell>
+                      <CellContents>
+                        <Textbox Name="Textbox45">
+                          <CanGrow>true</CanGrow>
+                          <KeepTogether>true</KeepTogether>
+                          <Paragraphs>
+                            <Paragraph>
+                              <TextRuns>
+                                <TextRun>
+                                  <Value>Non-Attend 4 Weeks +</Value>
+                                  <Style>
+                                    <FontFamily>Calibri</FontFamily>
+                                    <FontWeight>Bold</FontWeight>
+                                    <Color>White</Color>
+                                  </Style>
+                                </TextRun>
+                              </TextRuns>
+                              <Style>
+                                <TextAlign>Center</TextAlign>
+                              </Style>
+                            </Paragraph>
+                          </Paragraphs>
+                          <rd:DefaultName>Textbox45</rd:DefaultName>
+                          <Style>
+                            <Border>
+                              <Color>#ffffff</Color>
+                              <Style>Solid</Style>
+                            </Border>
+                            <TopBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </TopBorder>
+                            <BottomBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </BottomBorder>
+                            <LeftBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </LeftBorder>
+                            <RightBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </RightBorder>
+                            <BackgroundColor>#88527a</BackgroundColor>
+                            <VerticalAlign>Bottom</VerticalAlign>
+                            <PaddingLeft>2pt</PaddingLeft>
+                            <PaddingRight>2pt</PaddingRight>
+                            <PaddingTop>2pt</PaddingTop>
+                            <PaddingBottom>2pt</PaddingBottom>
+                          </Style>
+                        </Textbox>
+                      </CellContents>
+                    </TablixCell>
+                    <TablixCell>
+                      <CellContents>
+                        <Textbox Name="Textbox180">
+                          <KeepTogether>true</KeepTogether>
+                          <Paragraphs>
+                            <Paragraph>
+                              <TextRuns>
+                                <TextRun>
+                                  <Value />
+                                  <Style>
+                                    <FontFamily>Calibri</FontFamily>
+                                    <FontWeight>Bold</FontWeight>
+                                  </Style>
+                                </TextRun>
+                              </TextRuns>
+                              <Style>
+                                <TextAlign>Center</TextAlign>
+                              </Style>
+                            </Paragraph>
+                          </Paragraphs>
+                          <rd:DefaultName>Textbox177</rd:DefaultName>
+                          <Style>
+                            <Border>
+                              <Color>#ffffff</Color>
+                              <Style>Solid</Style>
+                            </Border>
+                            <TopBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </TopBorder>
+                            <BottomBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </BottomBorder>
+                            <LeftBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </LeftBorder>
+                            <RightBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </RightBorder>
+                            <BackgroundColor>#00b0ad</BackgroundColor>
+                            <PaddingLeft>2pt</PaddingLeft>
+                            <PaddingRight>2pt</PaddingRight>
+                            <PaddingTop>2pt</PaddingTop>
+                            <PaddingBottom>2pt</PaddingBottom>
+                          </Style>
+                        </Textbox>
+                      </CellContents>
+                    </TablixCell>
+                    <TablixCell>
+                      <CellContents>
+                        <Textbox Name="Textbox48">
+                          <CanGrow>true</CanGrow>
+                          <KeepTogether>true</KeepTogether>
+                          <Paragraphs>
+                            <Paragraph>
+                              <TextRuns>
+                                <TextRun>
+                                  <Value>Projected</Value>
+                                  <Style>
+                                    <FontFamily>Calibri</FontFamily>
+                                    <FontWeight>Bold</FontWeight>
+                                    <Color>White</Color>
+                                  </Style>
+                                </TextRun>
+                              </TextRuns>
+                              <Style>
+                                <TextAlign>Center</TextAlign>
+                              </Style>
+                            </Paragraph>
+                            <Paragraph>
+                              <TextRuns>
+                                <TextRun>
+                                  <Value>Pass</Value>
+                                  <Style>
+                                    <FontFamily>Calibri</FontFamily>
+                                    <FontWeight>Bold</FontWeight>
+                                    <Color>White</Color>
+                                  </Style>
+                                </TextRun>
+                              </TextRuns>
+                              <Style>
+                                <TextAlign>Center</TextAlign>
+                              </Style>
+                            </Paragraph>
+                          </Paragraphs>
+                          <rd:DefaultName>Textbox48</rd:DefaultName>
+                          <Style>
+                            <Border>
+                              <Color>#ffffff</Color>
+                              <Style>Solid</Style>
+                            </Border>
+                            <TopBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </TopBorder>
+                            <BottomBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </BottomBorder>
+                            <LeftBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </LeftBorder>
+                            <RightBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </RightBorder>
+                            <BackgroundColor>#88527a</BackgroundColor>
+                            <VerticalAlign>Bottom</VerticalAlign>
+                            <PaddingLeft>2pt</PaddingLeft>
+                            <PaddingRight>2pt</PaddingRight>
+                            <PaddingTop>2pt</PaddingTop>
+                            <PaddingBottom>2pt</PaddingBottom>
+                          </Style>
+                        </Textbox>
+                      </CellContents>
+                    </TablixCell>
+                  </TablixCells>
+                </TablixRow>
+                <TablixRow>
+                  <Height>0.5cm</Height>
+                  <TablixCells>
+                    <TablixCell>
+                      <CellContents>
+                        <Textbox Name="Category">
+                          <CanGrow>true</CanGrow>
+                          <KeepTogether>true</KeepTogether>
+                          <Paragraphs>
+                            <Paragraph>
+                              <TextRuns>
+                                <TextRun>
+                                  <Value>=Fields!Category.Value</Value>
+                                  <Style>
+                                    <FontFamily>Calibri</FontFamily>
+                                    <FontSize>8pt</FontSize>
+                                  </Style>
+                                </TextRun>
+                              </TextRuns>
+                              <Style />
+                            </Paragraph>
+                          </Paragraphs>
+                          <rd:DefaultName>Category</rd:DefaultName>
+                          <Style>
+                            <Border>
+                              <Color>#88527a</Color>
+                              <Style>Solid</Style>
+                            </Border>
+                            <TopBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </TopBorder>
+                            <BottomBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </BottomBorder>
+                            <LeftBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </LeftBorder>
+                            <RightBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </RightBorder>
+                            <PaddingLeft>2pt</PaddingLeft>
+                            <PaddingRight>2pt</PaddingRight>
+                            <PaddingTop>2pt</PaddingTop>
+                            <PaddingBottom>2pt</PaddingBottom>
+                          </Style>
+                        </Textbox>
+                      </CellContents>
+                    </TablixCell>
+                    <TablixCell>
+                      <CellContents>
+                        <Textbox Name="LastYearAch">
+                          <CanGrow>true</CanGrow>
+                          <KeepTogether>true</KeepTogether>
+                          <Paragraphs>
+                            <Paragraph>
+                              <TextRuns>
+                                <TextRun>
+                                  <Value>=Fields!LastYearAch.Value</Value>
+                                  <Style>
+                                    <FontFamily>Calibri</FontFamily>
+                                    <FontSize>8pt</FontSize>
+                                    <Format>0.0%</Format>
+                                    <Color>DimGray</Color>
+                                  </Style>
+                                </TextRun>
+                              </TextRuns>
+                              <Style>
+                                <TextAlign>Center</TextAlign>
+                              </Style>
+                            </Paragraph>
+                          </Paragraphs>
+                          <rd:DefaultName>LastYearAch</rd:DefaultName>
+                          <Style>
+                            <Border>
+                              <Color>#88527a</Color>
+                              <Style>Solid</Style>
+                            </Border>
+                            <PaddingLeft>2pt</PaddingLeft>
+                            <PaddingRight>2pt</PaddingRight>
+                            <PaddingTop>2pt</PaddingTop>
+                            <PaddingBottom>2pt</PaddingBottom>
+                          </Style>
+                        </Textbox>
+                      </CellContents>
+                    </TablixCell>
+                    <TablixCell>
+                      <CellContents>
+                        <Textbox Name="Target">
+                          <CanGrow>true</CanGrow>
+                          <KeepTogether>true</KeepTogether>
+                          <Paragraphs>
+                            <Paragraph>
+                              <TextRuns>
+                                <TextRun>
+                                  <Value>=Fields!Target.Value</Value>
+                                  <Style>
+                                    <FontFamily>Calibri</FontFamily>
+                                    <FontSize>8pt</FontSize>
+                                    <Format>0.0%</Format>
+                                  </Style>
+                                </TextRun>
+                              </TextRuns>
+                              <Style>
+                                <TextAlign>Center</TextAlign>
+                              </Style>
+                            </Paragraph>
+                          </Paragraphs>
+                          <rd:DefaultName>Target</rd:DefaultName>
+                          <Style>
+                            <Border>
+                              <Color>#88527a</Color>
+                              <Style>Solid</Style>
+                            </Border>
+                            <TopBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </TopBorder>
+                            <BottomBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </BottomBorder>
+                            <LeftBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </LeftBorder>
+                            <RightBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </RightBorder>
+                            <PaddingLeft>2pt</PaddingLeft>
+                            <PaddingRight>2pt</PaddingRight>
+                            <PaddingTop>2pt</PaddingTop>
+                            <PaddingBottom>2pt</PaddingBottom>
+                          </Style>
+                        </Textbox>
+                      </CellContents>
+                    </TablixCell>
+                    <TablixCell>
+                      <CellContents>
+                        <Textbox Name="Textbox188">
+                          <KeepTogether>true</KeepTogether>
+                          <Paragraphs>
+                            <Paragraph>
+                              <TextRuns>
+                                <TextRun>
+                                  <Value />
+                                  <Style>
+                                    <FontFamily>Calibri</FontFamily>
+                                    <FontWeight>Bold</FontWeight>
+                                  </Style>
+                                </TextRun>
+                              </TextRuns>
+                              <Style>
+                                <TextAlign>Center</TextAlign>
+                              </Style>
+                            </Paragraph>
+                          </Paragraphs>
+                          <rd:DefaultName>Textbox187</rd:DefaultName>
+                          <Style>
+                            <Border>
+                              <Color>#ffffff</Color>
+                              <Style>Solid</Style>
+                            </Border>
+                            <TopBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </TopBorder>
+                            <BottomBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </BottomBorder>
+                            <LeftBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </LeftBorder>
+                            <RightBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </RightBorder>
+                            <BackgroundColor>#00b0ad</BackgroundColor>
+                            <PaddingLeft>2pt</PaddingLeft>
+                            <PaddingRight>2pt</PaddingRight>
+                            <PaddingTop>2pt</PaddingTop>
+                            <PaddingBottom>2pt</PaddingBottom>
+                          </Style>
+                        </Textbox>
+                      </CellContents>
+                    </TablixCell>
+                    <TablixCell>
+                      <CellContents>
+                        <Textbox Name="AttendPer">
+                          <CanGrow>true</CanGrow>
+                          <KeepTogether>true</KeepTogether>
+                          <Paragraphs>
+                            <Paragraph>
+                              <TextRuns>
+                                <TextRun>
+                                  <Value>=Fields!AttendPer.Value</Value>
+                                  <Style>
+                                    <FontFamily>Calibri</FontFamily>
+                                    <FontSize>8pt</FontSize>
+                                    <FontWeight>Bold</FontWeight>
+                                    <Format>0.0%</Format>
+                                  </Style>
+                                </TextRun>
+                              </TextRuns>
+                              <Style>
+                                <TextAlign>Center</TextAlign>
+                              </Style>
+                            </Paragraph>
+                          </Paragraphs>
+                          <rd:DefaultName>AttendPer</rd:DefaultName>
+                          <Style>
+                            <Border>
+                              <Color>#88527a</Color>
+                              <Style>Solid</Style>
+                            </Border>
+                            <TopBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </TopBorder>
+                            <BottomBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </BottomBorder>
+                            <LeftBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </LeftBorder>
+                            <RightBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </RightBorder>
+                            <PaddingLeft>2pt</PaddingLeft>
+                            <PaddingRight>2pt</PaddingRight>
+                            <PaddingTop>2pt</PaddingTop>
+                            <PaddingBottom>2pt</PaddingBottom>
+                          </Style>
+                        </Textbox>
+                      </CellContents>
+                    </TablixCell>
+                    <TablixCell>
+                      <CellContents>
+                        <Textbox Name="Textbox183">
+                          <KeepTogether>true</KeepTogether>
+                          <Paragraphs>
+                            <Paragraph>
+                              <TextRuns>
+                                <TextRun>
+                                  <Value />
+                                  <Style>
+                                    <FontFamily>Calibri</FontFamily>
+                                    <FontWeight>Bold</FontWeight>
+                                  </Style>
+                                </TextRun>
+                              </TextRuns>
+                              <Style>
+                                <TextAlign>Center</TextAlign>
+                              </Style>
+                            </Paragraph>
+                          </Paragraphs>
+                          <rd:DefaultName>Textbox182</rd:DefaultName>
+                          <Style>
+                            <Border>
+                              <Color>#ffffff</Color>
+                              <Style>Solid</Style>
+                            </Border>
+                            <TopBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </TopBorder>
+                            <BottomBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </BottomBorder>
+                            <LeftBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </LeftBorder>
+                            <RightBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </RightBorder>
+                            <BackgroundColor>#00b0ad</BackgroundColor>
+                            <PaddingLeft>2pt</PaddingLeft>
+                            <PaddingRight>2pt</PaddingRight>
+                            <PaddingTop>2pt</PaddingTop>
+                            <PaddingBottom>2pt</PaddingBottom>
+                          </Style>
+                        </Textbox>
+                      </CellContents>
+                    </TablixCell>
+                    <TablixCell>
+                      <CellContents>
+                        <Textbox Name="LastYearRetSamePoint2">
+                          <CanGrow>true</CanGrow>
+                          <KeepTogether>true</KeepTogether>
+                          <Paragraphs>
+                            <Paragraph>
+                              <TextRuns>
+                                <TextRun>
+                                  <Value>=Fields!LastYearRetSamePoint.Value</Value>
+                                  <Style>
+                                    <FontFamily>Calibri</FontFamily>
+                                    <FontSize>8pt</FontSize>
+                                    <Format>0.0%</Format>
+                                    <Color>DimGray</Color>
+                                  </Style>
+                                </TextRun>
+                              </TextRuns>
+                              <Style>
+                                <TextAlign>Center</TextAlign>
+                              </Style>
+                            </Paragraph>
+                          </Paragraphs>
+                          <rd:DefaultName>LastYearRetSamePoint</rd:DefaultName>
+                          <Style>
+                            <Border>
+                              <Color>#88527a</Color>
+                              <Style>Solid</Style>
+                            </Border>
+                            <TopBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </TopBorder>
+                            <BottomBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </BottomBorder>
+                            <LeftBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </LeftBorder>
+                            <RightBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </RightBorder>
+                            <PaddingLeft>2pt</PaddingLeft>
+                            <PaddingRight>2pt</PaddingRight>
+                            <PaddingTop>2pt</PaddingTop>
+                            <PaddingBottom>2pt</PaddingBottom>
+                          </Style>
+                        </Textbox>
+                      </CellContents>
+                    </TablixCell>
+                    <TablixCell>
+                      <CellContents>
+                        <Textbox Name="CurrentRet2">
+                          <CanGrow>true</CanGrow>
+                          <KeepTogether>true</KeepTogether>
+                          <Paragraphs>
+                            <Paragraph>
+                              <TextRuns>
+                                <TextRun>
+                                  <Value>=Fields!CurrentRet.Value</Value>
+                                  <Style>
+                                    <FontFamily>Calibri</FontFamily>
+                                    <FontSize>8pt</FontSize>
+                                    <FontWeight>Bold</FontWeight>
+                                    <Format>0.0%</Format>
+                                  </Style>
+                                </TextRun>
+                              </TextRuns>
+                              <Style>
+                                <TextAlign>Center</TextAlign>
+                              </Style>
+                            </Paragraph>
+                          </Paragraphs>
+                          <rd:DefaultName>CurrentRet</rd:DefaultName>
+                          <Style>
+                            <Border>
+                              <Color>#88527a</Color>
+                              <Style>Solid</Style>
+                            </Border>
+                            <TopBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </TopBorder>
+                            <BottomBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </BottomBorder>
+                            <LeftBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </LeftBorder>
+                            <RightBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </RightBorder>
+                            <PaddingLeft>2pt</PaddingLeft>
+                            <PaddingRight>2pt</PaddingRight>
+                            <PaddingTop>2pt</PaddingTop>
+                            <PaddingBottom>2pt</PaddingBottom>
+                          </Style>
+                        </Textbox>
+                      </CellContents>
+                    </TablixCell>
+                    <TablixCell>
+                      <CellContents>
+                        <Textbox Name="DiffRet">
+                          <CanGrow>true</CanGrow>
+                          <KeepTogether>true</KeepTogether>
+                          <Paragraphs>
+                            <Paragraph>
+                              <TextRuns>
+                                <TextRun>
+                                  <Value>=Fields!DiffRet.Value</Value>
+                                  <Style>
+                                    <FontFamily>Calibri</FontFamily>
+                                    <FontSize>8pt</FontSize>
+                                    <Format>0.0%</Format>
+                                    <Color>=IIF(Fields!DiffRet.Value &lt; 0, "#FB2C36",
+IIF(Fields!DiffRet.Value &gt; 0, "#31C950",
+"#FF692A"
+))</Color>
+                                  </Style>
+                                </TextRun>
+                              </TextRuns>
+                              <Style>
+                                <TextAlign>Center</TextAlign>
+                              </Style>
+                            </Paragraph>
+                          </Paragraphs>
+                          <rd:DefaultName>DiffRet</rd:DefaultName>
+                          <Style>
+                            <Border>
+                              <Color>#88527a</Color>
+                              <Style>Solid</Style>
+                            </Border>
+                            <PaddingLeft>2pt</PaddingLeft>
+                            <PaddingRight>2pt</PaddingRight>
+                            <PaddingTop>2pt</PaddingTop>
+                            <PaddingBottom>2pt</PaddingBottom>
+                          </Style>
+                        </Textbox>
+                      </CellContents>
+                    </TablixCell>
+                    <TablixCell>
+                      <CellContents>
+                        <Textbox Name="NatAvgGFE">
+                          <CanGrow>true</CanGrow>
+                          <KeepTogether>true</KeepTogether>
+                          <Paragraphs>
+                            <Paragraph>
+                              <TextRuns>
+                                <TextRun>
+                                  <Value>=Fields!NatAvgGFE.Value</Value>
+                                  <Style>
+                                    <FontFamily>Calibri</FontFamily>
+                                    <FontSize>8pt</FontSize>
+                                    <Format>0.0%</Format>
+                                  </Style>
+                                </TextRun>
+                              </TextRuns>
+                              <Style>
+                                <TextAlign>Center</TextAlign>
+                              </Style>
+                            </Paragraph>
+                          </Paragraphs>
+                          <rd:DefaultName>NatAvgGFE</rd:DefaultName>
+                          <Style>
+                            <Border>
+                              <Color>#88527a</Color>
+                              <Style>Solid</Style>
+                            </Border>
+                            <TopBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </TopBorder>
+                            <BottomBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </BottomBorder>
+                            <LeftBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </LeftBorder>
+                            <RightBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </RightBorder>
+                            <PaddingLeft>2pt</PaddingLeft>
+                            <PaddingRight>2pt</PaddingRight>
+                            <PaddingTop>2pt</PaddingTop>
+                            <PaddingBottom>2pt</PaddingBottom>
+                          </Style>
+                        </Textbox>
+                      </CellContents>
+                    </TablixCell>
+                    <TablixCell>
+                      <CellContents>
+                        <Textbox Name="NatAvgAll">
+                          <CanGrow>true</CanGrow>
+                          <KeepTogether>true</KeepTogether>
+                          <Paragraphs>
+                            <Paragraph>
+                              <TextRuns>
+                                <TextRun>
+                                  <Value>=Fields!NatAvgAll.Value</Value>
+                                  <Style>
+                                    <FontFamily>Calibri</FontFamily>
+                                    <FontSize>8pt</FontSize>
+                                    <Format>0.0%</Format>
+                                  </Style>
+                                </TextRun>
+                              </TextRuns>
+                              <Style>
+                                <TextAlign>Center</TextAlign>
+                              </Style>
+                            </Paragraph>
+                          </Paragraphs>
+                          <rd:DefaultName>NatAvgAll</rd:DefaultName>
+                          <Style>
+                            <Border>
+                              <Color>#88527a</Color>
+                              <Style>Solid</Style>
+                            </Border>
+                            <TopBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </TopBorder>
+                            <BottomBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </BottomBorder>
+                            <LeftBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </LeftBorder>
+                            <RightBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </RightBorder>
+                            <PaddingLeft>2pt</PaddingLeft>
+                            <PaddingRight>2pt</PaddingRight>
+                            <PaddingTop>2pt</PaddingTop>
+                            <PaddingBottom>2pt</PaddingBottom>
+                          </Style>
+                        </Textbox>
+                      </CellContents>
+                    </TablixCell>
+                    <TablixCell>
+                      <CellContents>
+                        <Textbox Name="Textbox173">
+                          <KeepTogether>true</KeepTogether>
+                          <Paragraphs>
+                            <Paragraph>
+                              <TextRuns>
+                                <TextRun>
+                                  <Value />
+                                  <Style>
+                                    <FontFamily>Calibri</FontFamily>
+                                    <FontWeight>Bold</FontWeight>
+                                  </Style>
+                                </TextRun>
+                              </TextRuns>
+                              <Style>
+                                <TextAlign>Center</TextAlign>
+                              </Style>
+                            </Paragraph>
+                          </Paragraphs>
+                          <rd:DefaultName>Textbox172</rd:DefaultName>
+                          <Style>
+                            <Border>
+                              <Color>#ffffff</Color>
+                              <Style>Solid</Style>
+                            </Border>
+                            <TopBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </TopBorder>
+                            <BottomBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </BottomBorder>
+                            <LeftBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </LeftBorder>
+                            <RightBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </RightBorder>
+                            <BackgroundColor>#00b0ad</BackgroundColor>
+                            <PaddingLeft>2pt</PaddingLeft>
+                            <PaddingRight>2pt</PaddingRight>
+                            <PaddingTop>2pt</PaddingTop>
+                            <PaddingBottom>2pt</PaddingBottom>
+                          </Style>
+                        </Textbox>
+                      </CellContents>
+                    </TablixCell>
+                    <TablixCell>
+                      <CellContents>
+                        <Textbox Name="LastYearFinalVolume1">
+                          <CanGrow>true</CanGrow>
+                          <KeepTogether>true</KeepTogether>
+                          <Paragraphs>
+                            <Paragraph>
+                              <TextRuns>
+                                <TextRun>
+                                  <Value>=Fields!LastYearFinalVolume.Value</Value>
+                                  <Style>
+                                    <FontFamily>Calibri</FontFamily>
+                                    <FontSize>8pt</FontSize>
+                                    <Format>#,0</Format>
+                                    <Color>DimGray</Color>
+                                  </Style>
+                                </TextRun>
+                              </TextRuns>
+                              <Style>
+                                <TextAlign>Center</TextAlign>
+                              </Style>
+                            </Paragraph>
+                          </Paragraphs>
+                          <rd:DefaultName>LastYearFinalVolume1</rd:DefaultName>
+                          <Style>
+                            <Border>
+                              <Color>#88527a</Color>
+                              <Style>Solid</Style>
+                            </Border>
+                            <PaddingLeft>2pt</PaddingLeft>
+                            <PaddingRight>2pt</PaddingRight>
+                            <PaddingTop>2pt</PaddingTop>
+                            <PaddingBottom>2pt</PaddingBottom>
+                          </Style>
+                        </Textbox>
+                      </CellContents>
+                    </TablixCell>
+                    <TablixCell>
+                      <CellContents>
+                        <Textbox Name="CurrentVolume2">
+                          <CanGrow>true</CanGrow>
+                          <KeepTogether>true</KeepTogether>
+                          <Paragraphs>
+                            <Paragraph>
+                              <TextRuns>
+                                <TextRun>
+                                  <Value>=Fields!CurrentVolume.Value</Value>
+                                  <Style>
+                                    <FontFamily>Calibri</FontFamily>
+                                    <FontSize>8pt</FontSize>
+                                    <FontWeight>Bold</FontWeight>
+                                    <Format>#,0</Format>
+                                  </Style>
+                                </TextRun>
+                              </TextRuns>
+                              <Style>
+                                <TextAlign>Center</TextAlign>
+                              </Style>
+                            </Paragraph>
+                          </Paragraphs>
+                          <rd:DefaultName>CurrentVolume</rd:DefaultName>
+                          <Style>
+                            <Border>
+                              <Color>#88527a</Color>
+                              <Style>Solid</Style>
+                            </Border>
+                            <TopBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </TopBorder>
+                            <BottomBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </BottomBorder>
+                            <LeftBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </LeftBorder>
+                            <RightBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </RightBorder>
+                            <PaddingLeft>2pt</PaddingLeft>
+                            <PaddingRight>2pt</PaddingRight>
+                            <PaddingTop>2pt</PaddingTop>
+                            <PaddingBottom>2pt</PaddingBottom>
+                          </Style>
+                        </Textbox>
+                      </CellContents>
+                    </TablixCell>
+                    <TablixCell>
+                      <CellContents>
+                        <Textbox Name="HighRisk">
+                          <CanGrow>true</CanGrow>
+                          <KeepTogether>true</KeepTogether>
+                          <Paragraphs>
+                            <Paragraph>
+                              <TextRuns>
+                                <TextRun>
+                                  <Value>=Fields!HighRisk.Value</Value>
+                                  <Style>
+                                    <FontFamily>Calibri</FontFamily>
+                                    <FontSize>8pt</FontSize>
+                                    <Format>#,0</Format>
+                                    <Color>=IIF(Fields!HighRisk.Value &gt; 0, "#FB2C36",
+"#000000"
+)</Color>
+                                  </Style>
+                                </TextRun>
+                              </TextRuns>
+                              <Style>
+                                <TextAlign>Center</TextAlign>
+                              </Style>
+                            </Paragraph>
+                          </Paragraphs>
+                          <rd:DefaultName>HighRisk</rd:DefaultName>
+                          <Style>
+                            <Border>
+                              <Color>#88527a</Color>
+                              <Style>Solid</Style>
+                            </Border>
+                            <PaddingLeft>2pt</PaddingLeft>
+                            <PaddingRight>2pt</PaddingRight>
+                            <PaddingTop>2pt</PaddingTop>
+                            <PaddingBottom>2pt</PaddingBottom>
+                          </Style>
+                        </Textbox>
+                      </CellContents>
+                    </TablixCell>
+                    <TablixCell>
+                      <CellContents>
+                        <Textbox Name="NonAttend">
+                          <CanGrow>true</CanGrow>
+                          <KeepTogether>true</KeepTogether>
+                          <Paragraphs>
+                            <Paragraph>
+                              <TextRuns>
+                                <TextRun>
+                                  <Value>=Fields!NonAttend.Value</Value>
+                                  <Style>
+                                    <FontFamily>Calibri</FontFamily>
+                                    <FontSize>8pt</FontSize>
+                                    <Format>#,0</Format>
+                                    <Color>=IIF(Fields!NonAttend.Value &gt; 0, "#FB2C36",
+"#000000"
+)</Color>
+                                  </Style>
+                                </TextRun>
+                              </TextRuns>
+                              <Style>
+                                <TextAlign>Center</TextAlign>
+                              </Style>
+                            </Paragraph>
+                          </Paragraphs>
+                          <rd:DefaultName>NonAttend</rd:DefaultName>
+                          <Style>
+                            <Border>
+                              <Color>#88527a</Color>
+                              <Style>Solid</Style>
+                            </Border>
+                            <PaddingLeft>2pt</PaddingLeft>
+                            <PaddingRight>2pt</PaddingRight>
+                            <PaddingTop>2pt</PaddingTop>
+                            <PaddingBottom>2pt</PaddingBottom>
+                          </Style>
+                        </Textbox>
+                      </CellContents>
+                    </TablixCell>
+                    <TablixCell>
+                      <CellContents>
+                        <Textbox Name="Textbox178">
+                          <KeepTogether>true</KeepTogether>
+                          <Paragraphs>
+                            <Paragraph>
+                              <TextRuns>
+                                <TextRun>
+                                  <Value />
+                                  <Style>
+                                    <FontFamily>Calibri</FontFamily>
+                                    <FontWeight>Bold</FontWeight>
+                                  </Style>
+                                </TextRun>
+                              </TextRuns>
+                              <Style>
+                                <TextAlign>Center</TextAlign>
+                              </Style>
+                            </Paragraph>
+                          </Paragraphs>
+                          <rd:DefaultName>Textbox177</rd:DefaultName>
+                          <Style>
+                            <Border>
+                              <Color>#ffffff</Color>
+                              <Style>Solid</Style>
+                            </Border>
+                            <TopBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </TopBorder>
+                            <BottomBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </BottomBorder>
+                            <LeftBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </LeftBorder>
+                            <RightBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </RightBorder>
+                            <BackgroundColor>#00b0ad</BackgroundColor>
+                            <PaddingLeft>2pt</PaddingLeft>
+                            <PaddingRight>2pt</PaddingRight>
+                            <PaddingTop>2pt</PaddingTop>
+                            <PaddingBottom>2pt</PaddingBottom>
+                          </Style>
+                        </Textbox>
+                      </CellContents>
+                    </TablixCell>
+                    <TablixCell>
+                      <CellContents>
+                        <Textbox Name="ProjectedPass">
+                          <CanGrow>true</CanGrow>
+                          <KeepTogether>true</KeepTogether>
+                          <Paragraphs>
+                            <Paragraph>
+                              <TextRuns>
+                                <TextRun>
+                                  <Value>=Fields!ProjectedPass.Value</Value>
+                                  <Style>
+                                    <FontFamily>Calibri</FontFamily>
+                                    <FontSize>8pt</FontSize>
+                                    <FontWeight>Bold</FontWeight>
+                                    <Format>0.0%</Format>
+                                  </Style>
+                                </TextRun>
+                              </TextRuns>
+                              <Style>
+                                <TextAlign>Center</TextAlign>
+                              </Style>
+                            </Paragraph>
+                          </Paragraphs>
+                          <rd:DefaultName>ProjectedPass</rd:DefaultName>
+                          <Style>
+                            <Border>
+                              <Color>#88527a</Color>
+                              <Style>Solid</Style>
+                            </Border>
+                            <TopBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </TopBorder>
+                            <BottomBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </BottomBorder>
+                            <LeftBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </LeftBorder>
+                            <RightBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </RightBorder>
+                            <PaddingLeft>2pt</PaddingLeft>
+                            <PaddingRight>2pt</PaddingRight>
+                            <PaddingTop>2pt</PaddingTop>
+                            <PaddingBottom>2pt</PaddingBottom>
+                          </Style>
+                        </Textbox>
+                      </CellContents>
+                    </TablixCell>
+                  </TablixCells>
+                </TablixRow>
+              </TablixRows>
+            </TablixBody>
+            <TablixColumnHierarchy>
+              <TablixMembers>
+                <TablixMember />
+                <TablixMember />
+                <TablixMember />
+                <TablixMember />
+                <TablixMember />
+                <TablixMember />
+                <TablixMember />
+                <TablixMember />
+                <TablixMember />
+                <TablixMember />
+                <TablixMember />
+                <TablixMember />
+                <TablixMember />
+                <TablixMember />
+                <TablixMember />
+                <TablixMember />
+                <TablixMember />
+                <TablixMember />
+              </TablixMembers>
+            </TablixColumnHierarchy>
+            <TablixRowHierarchy>
+              <TablixMembers>
+                <TablixMember>
+                  <Group Name="AcademicYear1">
+                    <GroupExpressions>
+                      <GroupExpression>=Fields!AcademicYear.Value</GroupExpression>
+                    </GroupExpressions>
+                  </Group>
+                  <SortExpressions>
+                    <SortExpression>
+                      <Value>=Fields!AcademicYear.Value</Value>
+                    </SortExpression>
+                  </SortExpressions>
+                  <TablixMembers>
+                    <TablixMember>
+                      <KeepWithGroup>After</KeepWithGroup>
+                      <RepeatOnNewPage>true</RepeatOnNewPage>
+                    </TablixMember>
+                    <TablixMember>
+                      <KeepWithGroup>After</KeepWithGroup>
+                      <RepeatOnNewPage>true</RepeatOnNewPage>
+                    </TablixMember>
+                    <TablixMember>
+                      <Group Name="Details" />
+                    </TablixMember>
+                  </TablixMembers>
+                </TablixMember>
+              </TablixMembers>
+            </TablixRowHierarchy>
+            <DataSetName>SCA001</DataSetName>
+            <Height>2.0175cm</Height>
+            <Width>26.51128cm</Width>
+            <Style>
+              <Border>
+                <Style>Solid</Style>
+              </Border>
+              <TopBorder>
+                <Color>Black</Color>
+                <Style>Solid</Style>
+                <Width>1pt</Width>
+              </TopBorder>
+              <BottomBorder>
+                <Color>Black</Color>
+                <Style>Solid</Style>
+                <Width>1pt</Width>
+              </BottomBorder>
+              <LeftBorder>
+                <Color>Black</Color>
+                <Style>Solid</Style>
+                <Width>1pt</Width>
+              </LeftBorder>
+              <RightBorder>
+                <Color>Black</Color>
+                <Style>Solid</Style>
+                <Width>1pt</Width>
+              </RightBorder>
+            </Style>
+          </Tablix>
+        </ReportItems>
+        <Height>2.0175cm</Height>
+        <Style />
+      </Body>
+      <Width>26.51129cm</Width>
+      <Page>
+        <PageHeader>
+          <Height>2cm</Height>
+          <PrintOnFirstPage>true</PrintOnFirstPage>
+          <PrintOnLastPage>true</PrintOnLastPage>
+          <ReportItems>
+            <Textbox Name="HeaderReportTitle">
+              <CanGrow>true</CanGrow>
+              <KeepTogether>true</KeepTogether>
+              <Paragraphs>
+                <Paragraph>
+                  <TextRuns>
+                    <TextRun>
+                      <Value>Curriculum &amp; Learner Experience Score Card </Value>
+                      <Style>
+                        <FontFamily>Calibri</FontFamily>
+                        <FontSize>14pt</FontSize>
+                        <FontWeight>Bold</FontWeight>
+                      </Style>
+                    </TextRun>
+                    <TextRun>
+                      <Value>- </Value>
+                      <Style>
+                        <FontFamily>Calibri</FontFamily>
+                        <FontSize>14pt</FontSize>
+                        <FontWeight>Bold</FontWeight>
+                        <Color>#88527a</Color>
+                      </Style>
+                    </TextRun>
+                    <TextRun>
+                      <Value>=First(Fields!AcademicYear.Value, "SCA001")</Value>
+                      <Style>
+                        <FontFamily>Calibri</FontFamily>
+                        <FontSize>14pt</FontSize>
+                        <FontWeight>Bold</FontWeight>
+                        <Color>#88527a</Color>
+                      </Style>
+                    </TextRun>
+                    <TextRun>
+                      <Value xml:space="preserve"> </Value>
+                      <Style>
+                        <FontFamily>Calibri</FontFamily>
+                        <FontSize>14pt</FontSize>
+                        <FontWeight>Bold</FontWeight>
+                        <Color>#88527a</Color>
+                      </Style>
+                    </TextRun>
+                    <TextRun>
+                      <Value>=First(Fields!ILRReturn.Value, "SCA001")</Value>
+                      <Style>
+                        <FontFamily>Calibri</FontFamily>
+                        <FontSize>14pt</FontSize>
+                        <FontWeight>Bold</FontWeight>
+                        <Color>#88527a</Color>
+                      </Style>
+                    </TextRun>
+                    <TextRun>
+                      <Value> - </Value>
+                      <Style>
+                        <FontFamily>Calibri</FontFamily>
+                        <FontSize>14pt</FontSize>
+                        <FontWeight>Bold</FontWeight>
+                        <Color>#88527a</Color>
+                      </Style>
+                    </TextRun>
+                    <TextRun>
+                      <Value>=First(Fields!ILRReturnDate.Value, "SCA001")</Value>
+                      <Style>
+                        <FontFamily>Calibri</FontFamily>
+                        <FontSize>14pt</FontSize>
+                        <FontWeight>Bold</FontWeight>
+                        <Format>ddd dd MMM yy @ HH:mm</Format>
+                        <Color>#88527a</Color>
+                      </Style>
+                    </TextRun>
+                  </TextRuns>
+                  <Style />
+                </Paragraph>
+                <Paragraph>
+                  <TextRuns>
+                    <TextRun>
+                      <Value />
+                      <Style>
+                        <FontFamily>Calibri</FontFamily>
+                        <FontWeight>Normal</FontWeight>
+                      </Style>
+                    </TextRun>
+                  </TextRuns>
+                  <Style />
+                </Paragraph>
+                <Paragraph>
+                  <TextRuns>
+                    <TextRun>
+                      <Value>Combines data from the FIS, ProAchieve and ProSolution to provide the metrics below. For all data to be shown, a final ILR return should be added to ProAchieve and the FIS Funding Summariser</Value>
+                      <Style>
+                        <FontFamily>Calibri</FontFamily>
+                        <FontWeight>Normal</FontWeight>
+                      </Style>
+                    </TextRun>
+                  </TextRuns>
+                  <Style />
+                </Paragraph>
+              </Paragraphs>
+              <Left>2cm</Left>
+              <Height>2cm</Height>
+              <Width>22.28303cm</Width>
+              <Style>
+                <Border>
+                  <Style>None</Style>
+                </Border>
+                <PaddingLeft>2pt</PaddingLeft>
+                <PaddingRight>2pt</PaddingRight>
+                <PaddingTop>2pt</PaddingTop>
+                <PaddingBottom>2pt</PaddingBottom>
+              </Style>
+            </Textbox>
+            <Textbox Name="HeaderReportCode">
+              <CanGrow>true</CanGrow>
+              <KeepTogether>true</KeepTogether>
+              <Paragraphs>
+                <Paragraph>
+                  <TextRuns>
+                    <TextRun>
+                      <Value>SCA001</Value>
+                      <Style>
+                        <FontWeight>Bold</FontWeight>
+                      </Style>
+                    </TextRun>
+                  </TextRuns>
+                  <Style>
+                    <TextAlign>Center</TextAlign>
+                  </Style>
+                </Paragraph>
+              </Paragraphs>
+              <Height>2cm</Height>
+              <Width>2cm</Width>
+              <ZIndex>1</ZIndex>
+              <Style>
+                <Border>
+                  <Color>White</Color>
+                  <Style>None</Style>
+                </Border>
+                <BackgroundColor>#00b0ad</BackgroundColor>
+                <VerticalAlign>Bottom</VerticalAlign>
+                <PaddingLeft>2pt</PaddingLeft>
+                <PaddingRight>2pt</PaddingRight>
+                <PaddingTop>2pt</PaddingTop>
+                <PaddingBottom>2pt</PaddingBottom>
+              </Style>
+            </Textbox>
+            <Image Name="Image1">
+              <Source>Embedded</Source>
+              <Value>HSDC</Value>
+              <Sizing>FitProportional</Sizing>
+              <Left>24.45942cm</Left>
+              <Height>2cm</Height>
+              <Width>2.05186cm</Width>
+              <ZIndex>2</ZIndex>
+              <Style>
+                <Border>
+                  <Style>None</Style>
+                </Border>
+              </Style>
+            </Image>
+          </ReportItems>
+          <Style />
+        </PageHeader>
+        <PageFooter>
+          <Height>1.37639cm</Height>
+          <PrintOnFirstPage>true</PrintOnFirstPage>
+          <PrintOnLastPage>true</PrintOnLastPage>
+          <ReportItems>
+            <Textbox Name="FooterDate">
+              <CanGrow>true</CanGrow>
+              <KeepTogether>true</KeepTogether>
+              <Paragraphs>
+                <Paragraph>
+                  <TextRuns>
+                    <TextRun>
+                      <Value>="Generated: " &amp; Now() &amp; " by " &amp; User!UserID</Value>
+                      <Style>
+                        <FontFamily>Calibri</FontFamily>
+                      </Style>
+                    </TextRun>
+                  </TextRuns>
+                  <Style>
+                    <TextAlign>Left</TextAlign>
+                  </Style>
+                </Paragraph>
+              </Paragraphs>
+              <Top>0.77638cm</Top>
+              <Height>0.6cm</Height>
+              <Width>21.39417cm</Width>
+              <Style>
+                <Border>
+                  <Style>None</Style>
+                </Border>
+                <PaddingLeft>2pt</PaddingLeft>
+                <PaddingRight>2pt</PaddingRight>
+                <PaddingTop>2pt</PaddingTop>
+                <PaddingBottom>2pt</PaddingBottom>
+              </Style>
+            </Textbox>
+            <Textbox Name="FooterPages">
+              <CanGrow>true</CanGrow>
+              <KeepTogether>true</KeepTogether>
+              <Paragraphs>
+                <Paragraph>
+                  <TextRuns>
+                    <TextRun>
+                      <Value>=Globals!PageNumber &amp; " of " &amp; Globals!TotalPages</Value>
+                      <Style>
+                        <FontFamily>Calibri</FontFamily>
+                      </Style>
+                    </TextRun>
+                  </TextRuns>
+                  <Style>
+                    <TextAlign>Right</TextAlign>
+                  </Style>
+                </Paragraph>
+              </Paragraphs>
+              <Top>0.77638cm</Top>
+              <Left>21.62122cm</Left>
+              <Height>0.6cm</Height>
+              <Width>4.89007cm</Width>
+              <ZIndex>1</ZIndex>
+              <Style>
+                <Border>
+                  <Style>None</Style>
+                </Border>
+                <PaddingLeft>2pt</PaddingLeft>
+                <PaddingRight>2pt</PaddingRight>
+                <PaddingTop>2pt</PaddingTop>
+                <PaddingBottom>2pt</PaddingBottom>
+              </Style>
+            </Textbox>
+            <Textbox Name="FooterParameters">
+              <CanGrow>true</CanGrow>
+              <KeepTogether>true</KeepTogether>
+              <Paragraphs>
+                <Paragraph>
+                  <TextRuns>
+                    <TextRun>
+                      <Value>="Report Name: " &amp; Globals!ReportName &amp; ".   Parameters" 
+&amp; ": Academic Year = " &amp; Parameters!AcademicYear.Value 
+&amp; ", ILR Return = " &amp; Parameters!ILRReturn.Value</Value>
+                      <Style>
+                        <FontFamily>Calibri</FontFamily>
+                      </Style>
+                    </TextRun>
+                  </TextRuns>
+                  <Style>
+                    <TextAlign>Left</TextAlign>
+                  </Style>
+                </Paragraph>
+              </Paragraphs>
+              <Top>0.10582cm</Top>
+              <Left>0.05066cm</Left>
+              <Height>0.6cm</Height>
+              <Width>21.39417cm</Width>
+              <ZIndex>2</ZIndex>
+              <Style>
+                <Border>
+                  <Style>None</Style>
+                </Border>
+                <PaddingLeft>2pt</PaddingLeft>
+                <PaddingRight>2pt</PaddingRight>
+                <PaddingTop>2pt</PaddingTop>
+                <PaddingBottom>2pt</PaddingBottom>
+              </Style>
+            </Textbox>
+            <Textbox Name="FooterReportType">
+              <CanGrow>true</CanGrow>
+              <KeepTogether>true</KeepTogether>
+              <Paragraphs>
+                <Paragraph>
+                  <TextRuns>
+                    <TextRun>
+                      <Value>Scorecard</Value>
+                      <Style>
+                        <FontFamily>Calibri</FontFamily>
+                      </Style>
+                    </TextRun>
+                  </TextRuns>
+                  <Style>
+                    <TextAlign>Right</TextAlign>
+                  </Style>
+                </Paragraph>
+              </Paragraphs>
+              <Top>0.07055cm</Top>
+              <Left>21.62122cm</Left>
+              <Height>0.6cm</Height>
+              <Width>4.89007cm</Width>
+              <ZIndex>3</ZIndex>
+              <Style>
+                <Border>
+                  <Style>None</Style>
+                </Border>
+                <PaddingLeft>2pt</PaddingLeft>
+                <PaddingRight>2pt</PaddingRight>
+                <PaddingTop>2pt</PaddingTop>
+                <PaddingBottom>2pt</PaddingBottom>
+              </Style>
+            </Textbox>
+          </ReportItems>
+          <Style />
+        </PageFooter>
+        <PageHeight>21cm</PageHeight>
+        <PageWidth>29.7cm</PageWidth>
+        <InteractiveHeight>21cm</InteractiveHeight>
+        <InteractiveWidth>29.7cm</InteractiveWidth>
+        <LeftMargin>0.5cm</LeftMargin>
+        <RightMargin>0.5cm</RightMargin>
+        <TopMargin>0.5cm</TopMargin>
+        <BottomMargin>0.5cm</BottomMargin>
+        <ColumnSpacing>1cm</ColumnSpacing>
+        <Style />
+      </Page>
+    </ReportSection>
+  </ReportSections>
+  <ReportParameters>
+    <ReportParameter Name="AcademicYear">
+      <DataType>String</DataType>
+      <DefaultValue>
+        <DataSetReference>
+          <DataSetName>AcademicYearCur</DataSetName>
+          <ValueField>Code</ValueField>
+        </DataSetReference>
+      </DefaultValue>
+      <Prompt>Academic Year</Prompt>
+      <ValidValues>
+        <DataSetReference>
+          <DataSetName>AcademicYear</DataSetName>
+          <ValueField>Code</ValueField>
+          <LabelField>Description</LabelField>
+        </DataSetReference>
+      </ValidValues>
+    </ReportParameter>
+    <ReportParameter Name="ILRReturn">
+      <DataType>String</DataType>
+      <DefaultValue>
+        <DataSetReference>
+          <DataSetName>ILRReturnDefault</DataSetName>
+          <ValueField>Code</ValueField>
+        </DataSetReference>
+      </DefaultValue>
+      <Prompt>ILRReturn</Prompt>
+      <ValidValues>
+        <DataSetReference>
+          <DataSetName>ILRReturn</DataSetName>
+          <ValueField>Code</ValueField>
+          <LabelField>Description</LabelField>
+        </DataSetReference>
+      </ValidValues>
+    </ReportParameter>
+  </ReportParameters>
+  <ReportParametersLayout>
+    <GridLayoutDefinition>
+      <NumberOfColumns>2</NumberOfColumns>
+      <NumberOfRows>1</NumberOfRows>
+      <CellDefinitions>
+        <CellDefinition>
+          <ColumnIndex>0</ColumnIndex>
+          <RowIndex>0</RowIndex>
+          <ParameterName>AcademicYear</ParameterName>
+        </CellDefinition>
+        <CellDefinition>
+          <ColumnIndex>1</ColumnIndex>
+          <RowIndex>0</RowIndex>
+          <ParameterName>ILRReturn</ParameterName>
+        </CellDefinition>
+      </CellDefinitions>
+    </GridLayoutDefinition>
+  </ReportParametersLayout>
+  <Code>Public Function MultiParamValues(ByVal param As String, ByVal maxEntries As Integer) AS String
+    Dim paramValues() As String
+    Dim numSelected As Integer
+    Dim returnValue As String
+    Dim i As Integer
+    returnValue = ""
+
+    Try
+        paramValues = param.split(", ")
+        numSelected = paramValues.Length
+	
+	If Array.IndexOf(paramValues, "ALL") &gt;= 0 Then
+		Return "All"
+	ElseIf Array.IndexOf(paramValues, "-1") &gt;= 0 Then
+		Return "All"
+	Else
+        	If (maxEntries &gt; numSelected) THEN
+            		maxEntries = numSelected
+        	End If
+
+        	If (numSelected &gt; 5) Then
+            		For i = 0 To maxEntries - 1
+                	returnValue += ", " + paramValues(i).ToString()
+            		Next
+            		Return returnValue + "..."
+        	Else
+            		For i = 0 To numSelected - 1
+                		returnValue += ", " + paramValues(i).ToString()
+            		Next
+            		Return returnValue
+        	End If
+	End If
+    Catch
+        Return "Error"
+    End Try
+End Function
+
+Public Function FormatPercent(ByVal cellValue As DECIMAL) AS String
+    Dim returnValue As String
+
+    Try
+        IF (ROUND(cellValue, 2) = 0.00) THEN
+            returnValue = "0%"
+        ELSEIF (ROUND(cellValue, 2) = 1.00) THEN
+            returnValue = "0%"
+        ELSE
+            returnValue = "0.0%"
+        END IF
+        
+        Return returnValue
+    Catch
+        Return "Error"
+    End Try
+End Function
+
+Function OpenURL(ByVal URL As String) As String
+    Return "javascript:void(window.open('" &amp; System.Uri.EscapeDataString(URL) &amp; "','_blank'))"
+End Function</Code>
+  <EmbeddedImages>
+    <EmbeddedImage Name="HSDC">
+      <MIMEType>image/png</MIMEType>
+      <ImageData>iVBORw0KGgoAAAANSUhEUgAAAGkAAABoCAYAAADy3t6fAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAABbISURBVHhe7Z2Hd1TV2sbv//Gtu5aFKxERP/xERQjYQrEASq9eBazIRZp4AWkiXUGkJDSBEKoKCIQmEmoSEjpJCC30GghVmuv91m+HPZzZ+5zJTDKTZFzzrvUs8Zyzzzmzn/Pu/ba98w+JSaWXf5gHYlL5JEZSFEiMJBc5ceOmHLx6zTxcYRIj6YHcvH9fpuYdknYbt0mT9ZsUemTslOv37pmXlrv8bUjacv6iFFy/YR4OStadPift0x6S40TfHbvNy8td/hYk7Sy8rDq0Q9p2OXfrT/O0p0BOly0ZFjEmhu3ebzYtV4l6kvZdKZJWf2zxdWjnLRly+6+/zMv85NC16/LJth0WGYEw4cBB8zblJlFNEkOc2Zk/HTpqXuaTojt35fv9eVYbjd6Zu+Tz9GzrOBi4c695u3KTqCbpm90H/Dryhxzvr3134RXpmLbd6nwwbn+esuYCEXjk2nXzluUmUU3SpNx8XycO3rXPPK3k2t17MiX3kNXpYGJOvhx9YGx4EdRte5bMP3rcvG25StSShGbojmSIunX/vnmJ5BZdddWekXtz5IzDwEg6eNi6RqP1H1tl0bETfvctb4lKki7evi0dNxV3Pv/l/0357cRpv87G59l87oLfsHXnr79k1N4cixg3DNrprqnlIVFHEpabc3LHUnMKGjVij/9cNe3gEb9rkOM3boZs4f2Ym2/eplwk6kj61kHAsuOn/M7hzH60NdN3nqFq6/mLftcgG8+etwgwgRNrHgMrT54xbxdxiSqS5hw+5uss01BYfeqsX2eibW6OLSa62fGh4sCVq+ZtIypRQ5Lz6x9/4KCaT7Rgeutzbf7YKrNcfKXLd+5I/+w9VoebmJx7SD7bnmUdd+K9Tely5c5d8xER
+k6ggKa/omq+DmOi1oCk9Mh7OT9Pz7bkHybxY6Bmb02BoRFNNjfTCf7P3lFukvNKTdOHP274ObrFhi+8L3nb+oupYjrfduE1+zLEn9Rv37ilfyOxgExgaK06eDtmQAJDl1OpISNhJunTpkmzbtjVs+GhOsrzy4xRpNDlR5q5eo471nr9AHXtjSpJMXblS1m1Ks9rNWJUq7yZNV9eVhB7z5lvHQsGXCxZZzy8tCgqOmV0afpJ+++03+ec//yeGUmLYsKFml8ZIqmyIkRQFiJEUBYiRFAWoUJKmTp1iWTJOLFy3ThpMSvSzmt6ckiQpa9f6XZe2ZbN8vXiJZWGZ6DDzJ2k82f9+oaDvgoWSmrZRxvy6TL2HPt5m+iyZmZoqM1JT5fPkFPXe5m8JBmvXrrX6CAwdOsTs0vIjKS0tzbzUJ+R08HWc/gdOqhndPnLtRlC+zKdBXOOFD7dmyv4rRbLn8hXll+njvN+mcxf83qcscuXKFauPQIVqkhdJEOQsowJj9uWal8nPBSetDg0nIGRJwQkVRV918oy0dBD0n/RsOf/nbVWPFy6JGpKIWpsEmVnQ0zdvBRVzKwvG7suVwjt3ZNuFSyouxzHeizjgwghlZaOCJAhyxtP4kp1pBUItyYcLrA4NN9AaCiCpc9DHPt+eJb8UnJR8Iza3q/CK7LhU6HestFLpSTIJovbtmKOwkX9TmmV2aDiBdjJ8ZVwslE4Psrxdt2aqHBUxPy0Mc19l7fHFCUH2pcu+86WVSk2SOcQNyN7rV8rL8Pb+5uIhJxww0w4kBSkFQ4ia98rcJV/u2O0XoCW6zfF+Wbv9jAeNthu3uuaqQpEKJWnFCneSNm3aZBkJZmqBPFDC7BSp1a27hYSfkq3O8sLL4yf62r3weXd5qXsPadiztyzPy1fVQ1iNey8XqbQH6YlTN2+p4TXr0GHpNHCg/G/LllK1fn15pFqcevdHn35KnoiPlxotW8kLffqpd/wiY6ffu5tCocvy
+E6dVfgqt5b9/3n8YLS8qKrL6CFSoCb5w9Rqfmd18w2bZcPa8r83S46d8pnX8t6OttiB++EiLDC8826Wr1R7sOJivqof+vTldPRdLjkL93Tm58lqHDtb1gfBkQgPpnTzf8csfCh8AiUnzvYbueliuXFTkrkkVSlKjiVN8L7vqVHGdwI179y3T2oukusNHWT/aC14kNUhZrIYqDBIt382fb10XChp17iKF169L2rkLqkhGa4v2qch7Ocug0S6kQoc7L5Lqj/9RvSRVp0hO0VVl4podHD/CnaRQNKn2hx9b7cGEzdt89XY4xh/MnG1dUxp8NnGS0QvFcvXuXVXjZ74fw36FatLy5cutBwPmiRF7c9SckJjnXYxYWpI+2JyhLEbWGPUZONBqDwoKCtR8hLn9xtJV8kjcE9Y1oWLA99+7FmYibkMe+HjbDjlXWGjdC5QLSV6Gw5BFS2THxUL59wNn0QulJal7erbSTkh66/PuVnswNu3hsPNC777WeY241xOk3ujvpNHiZfLGslXy6uRpkjBkmLzb0X/eSkycav58JYevXZeeGTutd3RiZHqW9VxQoST1TJ5vvagbSkMS4Zz1Z86pKtP0C5fk6yGDrfag4fwlvjbV3nzTOg+eatLUdw3mO3MLmo8ViGRnZ0vz5u+6EsR85Cw7M0F4aUb+ERVbhHzz2aBcSPp6lvs4n/DDZOul3RAKSViE/Gh8LZxNvYaIH2q2BxgOum3V+HjrPHju08/U+eQjD42LkgTnFwNIO8UAC5alNDjC1AhSu46g7fiBqw8dtp4NIk7StIOHPa0zbTiUhEAkaa+fyAA/nn8zzKUcKVBRay29Bgyw2gMnSZjQ5nnw2DNPyxtLVwa1tJNrIMCMP/JOOOhmFRGRlIXHjqs5rNwNB0zPb3bvD9jJL0+YZBHiBq/2kKSXTupSYvydwtt3fO9BXTha5WWCO4e7+A86W+c1qj/3rIwbN1YyMzP9fqcWnF+GWL1oAPABLT52
+Qi0KcIaVELfF0eXqzLJ6Du+7pE4OlqR6o8dZbVXHNXvHF0V4pUdP+WTQYBk+epTqzG9Gj5KW/b7yna/6cn2rPXCSRALPPO+GevXqypgxo2VNerrSDOrzzOU0rG0ixucmmPw6DOWUciOJlQmYvs4XLutwV2/UWKttuPD2wp99zyH60bxLF+uaQHg0rqo807a9CguhOSxOc4vhQeavx0+qhdY8S89HTimX4Y7SXWdkWIPIgPlggJ9kXuuGeiPHWG3DBT0n4WBSGTvvSIG0+6ybdV0waNgwQebMmePrD8qTidExH5m/yW2xtVfEIWwkMfaaL6JRmTUJklJPnbFW7m3Y8Ls0btzQuj4YNG7TWtqv22j9DtOYwAp1SkQ16TuPtaUalVmTmiz4Wc0nJ2/eMn+WkpVr1shLbdvKI3FVrbaBwBzIu2PYMMwRYHWrs2B5qJaIaBIGAjkW88EmIqVJVWo9J3Gvv+6JpxISpFbjxtKoWVN5rEYNqz0Ys3Gz+h1uQtYVa5F3YAHZim3bZcQPE6Rp07et+7ihc69e6j4kEfVv0bkoajZYunPJYYlGRJNIJ5sd6oZQSNKdosFk/uWsn6y2oM6goVZ7DeZGbXXxby8T/Phxu16BlIm2Ttn5hLSJU0gAdlm7Qep+M0KeqFvHuqfG409U8VuGw9xE5dHvZ8753U9LREhiGaLZOW4IliS37WKWnzglv3iElbxIYpsAnFsdUR+9L1caeBgDmiSCrDiVRAhemZSkAr9Fdx9qGNbZ7EPHpGfmToUhu/b5nlf7q/7WfTVenTJdpSWokSipFiLsJJH/MTvHC6Xxk4geEFZhOG00brzVFrw0aJjVzg2Ec7xSFYt3+u94QhCV423atJKTJ0+qwCjZWrSR/649fVYZSUTXyUPRZuju/VKnvntI6a1RY6yF1l4SVj/JaxMKLwSrSYBhhjWsTLTaIPFyZtEkUgwEO4mLmfeiI9kGgDxRSbE72icuXWadf/aDLvL+6t9V
+tF6To+9P4BbHFMPg0SfdDQsqU4MVL8Mh5KQfEWCzM0pCsJrEEIJZahadeJH0ytDhas5gKDGfCSBZh2PcSPpX7drSLHW9+ihSf19vnddgbqn98afSfmqS/JZ7UBkUJOmYk1uvWi/PtG1ntdG4fNmuIiq4cVMNrcQXGS10VW5YNSlQgs4NJWmS9h/ctAF4kaTnJDMfRWGjWVk6cPAgv7b/evFFGZuRpRY3I++EUM9Q/dmaynKMe+1V65wTnTp1VPeGBMjgo9FBYCf4/cQbwz4nUbToFl1wQ0l+kunkmfAmaYh1rbnhE1lfJvxaXT/0tatZt44cOltsYWVduqwsSoaxbh6R8tKgSpXHZUZasaltvqMbMFS8hrtSk4ScVSu9A2cbQUmaVBLqjfneaguajxytzuMkoj1YgloY5hjGtF+iTfDa9eLVGl62qqFjOEdIiH0YGCFaTEmUR6qWPYX+3tRpSnPIFZm/hw/CTaP+OHLUug8oE0lIcUqieEcSNGvu4WPKD3Amu8pCEkk8L5L0cOckB8HPcUalIarVFz0lvn68LM/JVbtscRyjg/cllcH/U3+A5q3NyZM23dxN9pIQ9381pcXU6SrMhFWHX8ScSXY24+Il2X7hkvUbNdqvXmfdD5SZJC1Mhs6EFuOwNm2DNRy8UG+suwnefORYtWUNHwpRAyZysxSZ4YYtBIYnJkqX1HXqGBrGhoLOVRLkfIhes+eQHsYbLf5VpTmebNRY4p5xj1hoMD+9NeZ7VfWq76lNbyxVnbbw2n2FD6lX2hbrviBsJHkJX9B/EqdZDwbBaBJRZNYG4Vg6HUjKgCmP4st31hBgwhNuofiEGgdWRujQFRoDGWgezi7HdLLQeW8TpLwRsqcz0zOl9exktT0BC8ZS0zNlwYE81clYbKwAYRs2ssJE1bX8cfa8q7OO76Wd3LAbDqFISXV3biCcgiOJMLk7h0/Kcyk8xPzm/5n4WZ6iCywR0thEHugYXaXDXMAwCLHU
+l5uL1DSIEOigKBlXfCFqJbA+sSQpfeZZaAXJO8hjGJuSd0gRQ4EnggazTMZJDh8XQyxzlZlK9zIcQvaTSiOhkrTgwfoffqTeew4i8E3QHm0xMSwR8qHTnYLjyXk61TlBo2W0gWRnESZJSr58iGPY1EMTQ7beYZLnsEMyPtLKnFxJzcyUtVu2SH5+vly86J9lRYMhQ9+fyASkm26BKZVek1itgMGhO5ytn3XYpemESVZbLzweV1Xinq8l1Ro2lOd79JSEWXOVYYMWUYDo/Bg4RvBUF5gwNCLMTWxtA8n8N/vUaUmaM1s6dOpoPc+JVq1aSs+RI31RDIpwWOsU7F6tlZKkwQsXKzIwOrQwXDCp8yP1ArIVq1dbbUNB3KuvyOsz5/rIwWBgGGJ+oiBE12ozNzg32qWQZkbyXKlZ8xnrniWh5RdfyNWrV31DXzBSKYc7c6UfGVLmAzRozemz6pjaVzUETQqEWl0/8tVf4FfpYY2hzlmXgZWIef7We52se4SC559/Tg4fPuz3GwNJpdQkTRJfG44lVhRWFsUsOKNM1nRat+mzrLalRdPWreX4g3gam7xjBRZrzQFlFWqz+cMP3fNPoaJ69adcN3BykwojiQRZ4sJF1oMBJB26el2ZwZjRTMwIlhITPl83DubSVe7lt6VF47ZtfclFrDX2znPKoEFfW21Ki9atW/ndO5BUyHDHfIP56lULPmzREkUGJCFYc2gU5jarvn33WefuiT/3aTf/DTEmTpYGw0ZIqz59pFqDwEUkL/Tqq6IZphnspfUa9d9pJkuW/ipLd+2RtceOS15erixatEg6d/7AuvbNNxvLzZuBLTqnhDUKXpLQ2Uz+RH5V8aAHSd/9slQNMWgRcxBag/nq3J8bWbFmjdUWmLXgkM3uwpjNmNqDFi2Rak89abUDDEO3btnFJ/U9kndPP1tTDh60d+vHTGfhMz4Z1a3x8XWL3y2+rhQWBs7EmlJuJOHLMIToiR/xIok1sziL
+OKXEtdyEDvAKC2mS8GH0nzQgTsbKOfwd8jXt5syz2mnMmjXT71lr1nhbkQcOFC90Q7BAddbY+ZEQbbh9+08ZNWqknDgR+ubu5UISxZEMIQxhWjAKRs1Nth4M+ianqK/f3IpGCykGItw6pW0CktA+QLaY8BFCbkYXkvTZsUsGjnWvNiJFroV3aPT++9Y16j379vFdRxTCSYwJjJ7SitecFDaS+Hp5SWJtVOkgOHIc84qCv/1johreTKGOQNeooZWNvptotQWj58yVmflHVcqEYZVhk/1P9XvovRWuX78uVao8ZrXnGOY3mkibR2s8bV0Ddu7M9ns/t4pUDecHGqpE1Lpz/tkAvmocRF0Hgc/RwyPAavpJpOb1EILhwJ8twGfySlVMTElR7dAgHYYh5OMWfmGRl9kevDZ9tmo3bGuGdQ4wd2lhVTr+lUkMWkssDy3Tmd7SSMRI0l8hoEOpUdDFGnQ4CGSCayFeRxucWQKXhIh0WMiLpH7TpvsK4Pk4nEteTOnf/79WezB43nwVDzx61D3h1rZta9Uen8rp8KKxuAym+V4WiQhJgZYZAsgiGNreI2IAScwFev4gF8QcYv5RqY+SZlhtAXMSNXAEVAMJrkBCz15We5CSMk9ds2fPHusc6Nq1i/rweA/ii6QcTOszXBIRkrS37gWdPHt7rLsmpKSmKiIJ5dORhP3NClY0pM9Pc6y2YFxycQd7Cea9zhfV6t7Dag/mzi1eBbF//37rHIhv/q6y5JzxxUiJl+FQZmeWKLJJjhPkXhYvXWo9GPSYM0/VFyBYhs52zC0EPPm313C3bNlS83WUYAzoyZ0PhcXD7/fubbUHK1euUG3OnDljnQNNmrxt3j5iEhFN0kK8y1zpBvRfkPTy4let/10Nd6QKzHIuXYcQCklYeGa5GR8BccAm7zS12oOMjOLtavBvzHOAqp/ykoiShNDZzA+6czAA9GoFL5K04YDjaxLshDdJy/zewZlo00AjScqZbTWc
+UYeEhNet8yArK8vvOZGSiA13WjC7neVdzpUD/We4R7HT0jb6rqHuwOxggIaOX7TYagtMTTLLy5iPSEf88MMEqy1o166NX3uvwOpXX/Xzuy5S4kVSWDSJHD91BHQSDqxekIWJSpim/0x3kggLOYXQjjOtTeUN2VKvAKtJEiEmPexCEKY1WmC282pP3bZ5jQZp8mBlwID+MmHCePNwiRKxsBDzgK4jwNFDsITIDRFkxevvnuTuzJokIXQ00QbnX0QOliQEX4nnYsrPX7xYnvQopK9Tp7bZVInXEsyXXnpRGReBhH2KWrRo7mszffo085KAEjGSnH+qjcwqwxxmtXNrskAB1mDEiySW6Tv31d66dYssXLhA+vX7UqpXr2Zd7wTv5Cbr13sX7lerFidJSYlqWEIwNtAw7tWr1xeuoafk5LnmIzwlIiRRSGjOIewGwhBFQYn2LUoyHEoSr03NSws6NJAMH/6N1aYs4P2DkYhYd861OoACQeJbiNMrr0wkdejQ3jWPZMrHH39ktS0NmjVrogK8wUhESIII51+eJKNq1sAhlYWkESO+NW8dUD75pGxEUeIVzAehJSIkIeSL9J/2pNKUVXWmVCRJNWpUl8GDB8nZs4EnfS8hbEQk3LxvIMTFPSFJSUnmrUqUiJGEULdm/n1Xp5TVcMCMxmoqCS1btpAuXTorwwHfaNeuwLsLBysYCtOmJSnNMH+DEyQRIef8+Ycb/oYiETEcgpWyalJlE0xxouZYlKTVz52zE5elkYhqUknydyMpUuIVcQhbWCiQxEgKTmIkRYHESIoCiZEUBRIjKQqkUpIUQ3CIkRQFiJEUBYiRFAWIkRQFKBeS8vLy1IbqMZQOzoIdLWEnKSbhlxhJUSAxkqJAYiRFgfw/JwOdDMuAFLQAAAAASUVORK5CYII=</ImageData>
+    </EmbeddedImage>
+  </EmbeddedImages>
+  <Language>en-GB</Language>
+  <ConsumeContainerWhitespace>true</ConsumeContainerWhitespace>
+  <rd:ReportUnitType>Cm</rd:ReportUnitType>
+  <rd:ReportID>9fff6b13-cd8f-4a15-9969-7d34e10b73cd</rd:ReportID>
+</Report>

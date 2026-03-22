@@ -1,0 +1,8 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<RptDataSource xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" Name="ProSolution">
+  <ConnectionProperties>
+    <Extension>SQL</Extension>
+    <ConnectString>Data Source=DBS-MIS-05;Initial Catalog=ProSolution</ConnectString>
+  </ConnectionProperties>
+  <DataSourceID>527fe06e-5849-444b-b4a6-ca5571a1b19c</DataSourceID>
+</RptDataSource>
