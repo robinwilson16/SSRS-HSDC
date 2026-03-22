@@ -1,0 +1,2814 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Report xmlns="http://schemas.microsoft.com/sqlserver/reporting/2016/01/reportdefinition" xmlns:rd="http://schemas.microsoft.com/SQLServer/reporting/reportdesigner" xmlns:am="http://schemas.microsoft.com/sqlserver/reporting/authoringmetadata">
+  <am:AuthoringMetadata>
+    <am:CreatedBy>
+      <am:Name>SSDTRS</am:Name>
+      <am:Version>17.5.33424.131</am:Version>
+    </am:CreatedBy>
+    <am:UpdatedBy>
+      <am:Name>SSDTRS</am:Name>
+      <am:Version>18.4.11605.240</am:Version>
+    </am:UpdatedBy>
+    <am:LastModifiedTimestamp>2026-03-13T14:44:14.2814598Z</am:LastModifiedTimestamp>
+  </am:AuthoringMetadata>
+  <Author>New College Swindon</Author>
+  <AutoRefresh>0</AutoRefresh>
+  <DataSources>
+    <DataSource Name="EBSReporting">
+      <DataSourceReference>EBSReporting</DataSourceReference>
+      <rd:SecurityType>Integrated</rd:SecurityType>
+      <rd:DataSourceID>1b82cd94-8454-486e-89d5-52e7b263a15d</rd:DataSourceID>
+    </DataSource>
+  </DataSources>
+  <DataSets>
+    <DataSet Name="APP001">
+      <Query>
+        <DataSourceName>EBSReporting</DataSourceName>
+        <QueryParameters>
+          <QueryParameter Name="@AcademicYear">
+            <Value>=Parameters!AcademicYear.Value</Value>
+          </QueryParameter>
+          <QueryParameter Name="@OverdueOnly">
+            <Value>=Parameters!OverdueOnly.Value</Value>
+          </QueryParameter>
+          <QueryParameter Name="@Standard">
+            <Value>=Parameters!Standard.Value</Value>
+          </QueryParameter>
+          <QueryParameter Name="@OverdueAmount">
+            <Value>=Parameters!OverdueAmount.Value</Value>
+          </QueryParameter>
+          <QueryParameter Name="@TrainingConsultant1">
+            <Value>=Parameters!TrainingConsultant1.Value</Value>
+          </QueryParameter>
+        </QueryParameters>
+        <CommandText>/*
+DECLARE @AcademicYear VARCHAR(5) = '25/26'
+DECLARE @OverdueOnly INT = -1
+DECLARE @Standard VARCHAR(3) = 'ALL'
+DECLARE @OverdueAmount INT = -1
+DECLARE @TrainingConsultant1 VARCHAR(50) = 'ALL'
+*/
+
+SELECT
+	ENR.AcademicYearID,
+	ENR.LearnRefNumber,
+	ENR.Surname,
+	ENR.Forename,
+	ENR.StandardCode,
+	ENR.StandardName,
+	ENR.CourseCode,
+	ENR.CourseTitle,
+	ENR.OccurrenceCode,
+	ENR.CompletionStatusCode,
+	ENR.CompletionStatusName,
+	ENR.OutcomeCode,
+	ENR.OutcomeName,
+	ENR.OriginalStartDate,
+	ENR.StartDate,
+	ENR.PlannedEndDate,
+	ENR.ActualEndDate,
+	ENR.AchievementDate,
+	TrainingConsultant1StaffRef = COALESCE ( ENR.TrainingConsultant1StaffRef, '0' ),
+	TrainingConsultant1StaffName = COALESCE ( ENR.TrainingConsultant1StaffName, '-- Not Specified --' ),
+	TrainingConsultant2StaffRef = COALESCE ( ENR.TrainingConsultant2StaffRef, '0' ),
+	TrainingConsultant2StaffName = COALESCE ( ENR.TrainingConsultant2StaffName, '-- Not Specified --' ),
+	BusinessDevelopmentStaffRef = COALESCE ( ENR.BusinessDevelopmentStaffRef, '0' ),
+	BusinessDevelopmentStaffName = COALESCE ( ENR.BusinessDevelopmentStaffName, '-- Not Specified --' ),
+	OverdueCategory = 
+		CASE
+			WHEN ENR.CompletionStatusCode = '2' THEN 'Completed'
+			WHEN
+				ENR.CompletionStatusCode = '1'
+				AND COALESCE ( ENR.OutcomeCode, '9' ) = '8' THEN 'In Gateway'
+			WHEN ENR.CompletionStatusCode = '3' THEN 'Withdrawn'
+			WHEN ENR.CompletionStatusCode = '6' THEN 'Break in Learning'
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt;= CAST ( DATEADD ( DAY, 180, ENR.PlannedEndDate ) AS DATE ) THEN 'Overdue'
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt;= CAST ( DATEADD ( DAY, 90, ENR.PlannedEndDate ) AS DATE ) THEN 'Overdue'
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt;= CAST ( DATEADD ( DAY, 60, ENR.PlannedEndDate ) AS DATE ) THEN 'Overdue'
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt;= CAST ( DATEADD ( DAY, 30, ENR.PlannedEndDate ) AS DATE ) THEN 'Overdue'
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt; CAST ( DATEADD ( DAY, 0, ENR.PlannedEndDate ) AS DATE ) THEN 'Overdue'
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt; CAST ( DATEADD ( DAY, -30, ENR.PlannedEndDate ) AS DATE ) THEN 'Ending Soon'
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt; CAST ( DATEADD ( DAY, -60, ENR.PlannedEndDate ) AS DATE ) THEN 'Ending Soon'
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt; CAST ( DATEADD ( DAY, -90, ENR.PlannedEndDate ) AS DATE ) THEN 'Ending Soon'
+			ELSE 'Not Overdue'
+		END,
+	OverdueCategoryOrder = 
+		CASE
+			WHEN ENR.CompletionStatusCode = '2' THEN 7
+			WHEN
+				ENR.CompletionStatusCode = '1'
+				AND COALESCE ( ENR.OutcomeCode, '9' ) = '8' THEN 6
+			WHEN ENR.CompletionStatusCode = '3' THEN 1
+			WHEN ENR.CompletionStatusCode = '6' THEN 2
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt;= CAST ( DATEADD ( DAY, 180, ENR.PlannedEndDate ) AS DATE ) THEN 4
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt;= CAST ( DATEADD ( DAY, 90, ENR.PlannedEndDate ) AS DATE ) THEN 4
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt;= CAST ( DATEADD ( DAY, 60, ENR.PlannedEndDate ) AS DATE ) THEN 4
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt;= CAST ( DATEADD ( DAY, 30, ENR.PlannedEndDate ) AS DATE ) THEN 4
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt; CAST ( DATEADD ( DAY, 0, ENR.PlannedEndDate ) AS DATE ) THEN 4
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt; CAST ( DATEADD ( DAY, -30, ENR.PlannedEndDate ) AS DATE ) THEN 5
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt; CAST ( DATEADD ( DAY, -60, ENR.PlannedEndDate ) AS DATE ) THEN 5
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt; CAST ( DATEADD ( DAY, -90, ENR.PlannedEndDate ) AS DATE ) THEN 5
+			ELSE 3
+		END,
+	OverdueAmount = 
+		CASE
+			WHEN ENR.CompletionStatusCode = '2' THEN 'Completed'
+			WHEN
+				ENR.CompletionStatusCode = '1'
+				AND COALESCE ( ENR.OutcomeCode, '9' ) = '8' THEN 'In Gateway'
+			WHEN ENR.CompletionStatusCode = '3' THEN 'Withdrawn'
+			WHEN ENR.CompletionStatusCode = '6' THEN 'Break in Learning'
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt;= CAST ( DATEADD ( DAY, 180, ENR.PlannedEndDate ) AS DATE ) THEN '180+ Days'
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt;= CAST ( DATEADD ( DAY, 90, ENR.PlannedEndDate ) AS DATE ) THEN '90-179 Days'
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt;= CAST ( DATEADD ( DAY, 60, ENR.PlannedEndDate ) AS DATE ) THEN '60-89 Days'
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt;= CAST ( DATEADD ( DAY, 30, ENR.PlannedEndDate ) AS DATE ) THEN '30-59 Days'
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt; CAST ( DATEADD ( DAY, 0, ENR.PlannedEndDate ) AS DATE ) THEN '1-29 Days'
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt; CAST ( DATEADD ( DAY, -30, ENR.PlannedEndDate ) AS DATE ) THEN '1-29 Days'
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt; CAST ( DATEADD ( DAY, -60, ENR.PlannedEndDate ) AS DATE ) THEN '30-59 Days'
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt; CAST ( DATEADD ( DAY, -90, ENR.PlannedEndDate ) AS DATE ) THEN '60-89 Days'
+			ELSE 'Not Overdue'
+		END,
+	OverdueAmountOrder = 
+		CASE
+			WHEN ENR.CompletionStatusCode = '2' THEN 13
+			WHEN
+				ENR.CompletionStatusCode = '1'
+				AND COALESCE ( ENR.OutcomeCode, '9' ) = '8' THEN 12
+			WHEN ENR.CompletionStatusCode = '3' THEN 1
+			WHEN ENR.CompletionStatusCode = '6' THEN 2
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt;= CAST ( DATEADD ( DAY, 180, ENR.PlannedEndDate ) AS DATE ) THEN 8
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt;= CAST ( DATEADD ( DAY, 90, ENR.PlannedEndDate ) AS DATE ) THEN 7
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt;= CAST ( DATEADD ( DAY, 60, ENR.PlannedEndDate ) AS DATE ) THEN 6
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt;= CAST ( DATEADD ( DAY, 30, ENR.PlannedEndDate ) AS DATE ) THEN 5
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt; CAST ( DATEADD ( DAY, 0, ENR.PlannedEndDate ) AS DATE ) THEN 4
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt; CAST ( DATEADD ( DAY, -30, ENR.PlannedEndDate ) AS DATE ) THEN 11
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt; CAST ( DATEADD ( DAY, -60, ENR.PlannedEndDate ) AS DATE ) THEN 10
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt; CAST ( DATEADD ( DAY, -90, ENR.PlannedEndDate ) AS DATE ) THEN 9
+			ELSE 3
+		END
+FROM Enrolment ENR
+INNER JOIN (
+	SELECT
+		ENR.EnrolmentID,
+		ENR.LearnRefNumber,
+		ENR.StandardCode,
+		ENR.CompletionStatusCode,
+		StartDate = COALESCE ( ENR.OriginalStartDate, ENR.StartDate ),
+		RowNum = 
+			ROW_NUMBER () OVER (
+				PARTITION BY
+					ENR.LearnRefNumber,
+					ENR.StandardCode,
+					COALESCE ( ENR.OriginalStartDate, ENR.StartDate )
+				ORDER BY
+					ENR.CompletionStatusCode,
+					ENR.StartDate DESC
+			)
+	FROM Enrolment ENR
+	WHERE
+		ENR.AcademicYearID = @AcademicYear
+	AND ENR.IncludeInILR = 'Y'
+	AND (
+		ENR.FundStream = '36'
+		OR (
+			ENR.FundStream = '35'
+			AND ENR.ProgTypeID IS NOT NULL
+		)
+	)
+	AND ENR.LearningAimCode = 'ZPROG001'
+) ACT
+	ON ACT.LearnRefNumber = ENR.LearnRefNumber
+	AND ACT.EnrolmentID = ENR.EnrolmentID
+	AND ACT.RowNum = 1
+
+WHERE
+	ENR.AcademicYearID = @AcademicYear
+	AND ENR.IncludeInILR = 'Y'
+	AND (
+		ENR.CountAsStart = 'Y'
+		OR ENR.CompletionStatusCode = '6'
+	)
+	AND (
+		ENR.FundStream = '36'
+		OR (
+			ENR.FundStream = '35'
+			AND ENR.ProgTypeID IS NOT NULL
+		)
+	)
+	AND ENR.LearningAimCode = 'ZPROG001'
+	AND (
+		CASE
+			WHEN ENR.CompletionStatusCode = '2' THEN 7
+			WHEN
+				ENR.CompletionStatusCode = '1'
+				AND COALESCE ( ENR.OutcomeCode, '9' ) = '8' THEN 6
+			WHEN ENR.CompletionStatusCode = '3' THEN 1
+			WHEN ENR.CompletionStatusCode = '6' THEN 2
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt;= CAST ( DATEADD ( DAY, 180, ENR.PlannedEndDate ) AS DATE ) THEN 4
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt;= CAST ( DATEADD ( DAY, 90, ENR.PlannedEndDate ) AS DATE ) THEN 4
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt;= CAST ( DATEADD ( DAY, 60, ENR.PlannedEndDate ) AS DATE ) THEN 4
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt;= CAST ( DATEADD ( DAY, 30, ENR.PlannedEndDate ) AS DATE ) THEN 4
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt; CAST ( DATEADD ( DAY, 0, ENR.PlannedEndDate ) AS DATE ) THEN 4
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt; CAST ( DATEADD ( DAY, -30, ENR.PlannedEndDate ) AS DATE ) THEN 5
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt; CAST ( DATEADD ( DAY, -60, ENR.PlannedEndDate ) AS DATE ) THEN 5
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt; CAST ( DATEADD ( DAY, -90, ENR.PlannedEndDate ) AS DATE ) THEN 5
+			ELSE 3
+		END IN ( @OverdueOnly )
+		OR -1 IN ( @OverdueOnly )
+	)
+	AND ( ENR.StandardCode IN ( @Standard ) OR 'ALL' IN ( @Standard ) )
+	AND (
+		CASE
+			WHEN ENR.CompletionStatusCode = '2' THEN 13
+			WHEN
+				ENR.CompletionStatusCode = '1'
+				AND COALESCE ( ENR.OutcomeCode, '9' ) = '8' THEN 12
+			WHEN ENR.CompletionStatusCode = '3' THEN 1
+			WHEN ENR.CompletionStatusCode = '6' THEN 2
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt;= CAST ( DATEADD ( DAY, 180, ENR.PlannedEndDate ) AS DATE ) THEN 8
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt;= CAST ( DATEADD ( DAY, 90, ENR.PlannedEndDate ) AS DATE ) THEN 7
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt;= CAST ( DATEADD ( DAY, 60, ENR.PlannedEndDate ) AS DATE ) THEN 6
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt;= CAST ( DATEADD ( DAY, 30, ENR.PlannedEndDate ) AS DATE ) THEN 5
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt; CAST ( DATEADD ( DAY, 0, ENR.PlannedEndDate ) AS DATE ) THEN 4
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt; CAST ( DATEADD ( DAY, -30, ENR.PlannedEndDate ) AS DATE ) THEN 11
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt; CAST ( DATEADD ( DAY, -60, ENR.PlannedEndDate ) AS DATE ) THEN 10
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt; CAST ( DATEADD ( DAY, -90, ENR.PlannedEndDate ) AS DATE ) THEN 9
+			ELSE 3
+		END IN ( @OverdueAmount ) OR -1 IN ( @OverdueAmount )
+	)
+	AND ( COALESCE ( ENR.TrainingConsultant1StaffRef, '0' ) IN ( @TrainingConsultant1 ) OR 'ALL' IN ( @TrainingConsultant1 ) )
+	--AND ENR.LearnRefNumber = '111217'
+ORDER BY
+	ENR.AcademicYearID,
+	ENR.Surname,
+	ENR.Forename,
+	ENR.LearnRefNumber,
+	ENR.CourseCode,
+	ENR.StandardCode</CommandText>
+      </Query>
+      <Fields>
+        <Field Name="AcademicYearID">
+          <DataField>AcademicYearID</DataField>
+          <rd:TypeName>System.String</rd:TypeName>
+        </Field>
+        <Field Name="LearnRefNumber">
+          <DataField>LearnRefNumber</DataField>
+          <rd:TypeName>System.String</rd:TypeName>
+        </Field>
+        <Field Name="Surname">
+          <DataField>Surname</DataField>
+          <rd:TypeName>System.String</rd:TypeName>
+        </Field>
+        <Field Name="Forename">
+          <DataField>Forename</DataField>
+          <rd:TypeName>System.String</rd:TypeName>
+        </Field>
+        <Field Name="StandardCode">
+          <DataField>StandardCode</DataField>
+          <rd:TypeName>System.String</rd:TypeName>
+        </Field>
+        <Field Name="StandardName">
+          <DataField>StandardName</DataField>
+          <rd:TypeName>System.String</rd:TypeName>
+        </Field>
+        <Field Name="CourseCode">
+          <DataField>CourseCode</DataField>
+          <rd:TypeName>System.String</rd:TypeName>
+        </Field>
+        <Field Name="CourseTitle">
+          <DataField>CourseTitle</DataField>
+          <rd:TypeName>System.String</rd:TypeName>
+        </Field>
+        <Field Name="OccurrenceCode">
+          <DataField>OccurrenceCode</DataField>
+          <rd:TypeName>System.String</rd:TypeName>
+        </Field>
+        <Field Name="CompletionStatusCode">
+          <DataField>CompletionStatusCode</DataField>
+          <rd:TypeName>System.Int32</rd:TypeName>
+        </Field>
+        <Field Name="CompletionStatusName">
+          <DataField>CompletionStatusName</DataField>
+          <rd:TypeName>System.String</rd:TypeName>
+        </Field>
+        <Field Name="OutcomeCode">
+          <DataField>OutcomeCode</DataField>
+          <rd:TypeName>System.Int32</rd:TypeName>
+        </Field>
+        <Field Name="OutcomeName">
+          <DataField>OutcomeName</DataField>
+          <rd:TypeName>System.String</rd:TypeName>
+        </Field>
+        <Field Name="OriginalStartDate">
+          <DataField>OriginalStartDate</DataField>
+          <rd:TypeName>System.DateTime</rd:TypeName>
+        </Field>
+        <Field Name="StartDate">
+          <DataField>StartDate</DataField>
+          <rd:TypeName>System.DateTime</rd:TypeName>
+        </Field>
+        <Field Name="PlannedEndDate">
+          <DataField>PlannedEndDate</DataField>
+          <rd:TypeName>System.DateTime</rd:TypeName>
+        </Field>
+        <Field Name="ActualEndDate">
+          <DataField>ActualEndDate</DataField>
+          <rd:TypeName>System.DateTime</rd:TypeName>
+        </Field>
+        <Field Name="AchievementDate">
+          <DataField>AchievementDate</DataField>
+          <rd:TypeName>System.DateTime</rd:TypeName>
+        </Field>
+        <Field Name="TrainingConsultant1StaffRef">
+          <DataField>TrainingConsultant1StaffRef</DataField>
+          <rd:TypeName>System.String</rd:TypeName>
+        </Field>
+        <Field Name="TrainingConsultant1StaffName">
+          <DataField>TrainingConsultant1StaffName</DataField>
+          <rd:TypeName>System.String</rd:TypeName>
+        </Field>
+        <Field Name="TrainingConsultant2StaffRef">
+          <DataField>TrainingConsultant2StaffRef</DataField>
+          <rd:TypeName>System.String</rd:TypeName>
+        </Field>
+        <Field Name="TrainingConsultant2StaffName">
+          <DataField>TrainingConsultant2StaffName</DataField>
+          <rd:TypeName>System.String</rd:TypeName>
+        </Field>
+        <Field Name="BusinessDevelopmentStaffRef">
+          <DataField>BusinessDevelopmentStaffRef</DataField>
+          <rd:TypeName>System.String</rd:TypeName>
+        </Field>
+        <Field Name="BusinessDevelopmentStaffName">
+          <DataField>BusinessDevelopmentStaffName</DataField>
+          <rd:TypeName>System.String</rd:TypeName>
+        </Field>
+        <Field Name="OverdueCategory">
+          <DataField>OverdueCategory</DataField>
+          <rd:TypeName>System.String</rd:TypeName>
+        </Field>
+        <Field Name="OverdueCategoryOrder">
+          <DataField>OverdueCategoryOrder</DataField>
+          <rd:TypeName>System.Int32</rd:TypeName>
+        </Field>
+        <Field Name="OverdueAmount">
+          <DataField>OverdueAmount</DataField>
+          <rd:TypeName>System.String</rd:TypeName>
+        </Field>
+        <Field Name="OverdueAmountOrder">
+          <DataField>OverdueAmountOrder</DataField>
+          <rd:TypeName>System.Int32</rd:TypeName>
+        </Field>
+      </Fields>
+    </DataSet>
+    <DataSet Name="AcademicYear">
+      <Query>
+        <DataSourceName>EBSReporting</DataSourceName>
+        <CommandText>SELECT DISTINCT
+	Code = ENR.AcademicYearID,
+	Description = ENR.AcademicYearID
+FROM dbo.Enrolment ENR
+ORDER BY
+	ENR.AcademicYearID</CommandText>
+      </Query>
+      <Fields>
+        <Field Name="Code">
+          <DataField>Code</DataField>
+          <rd:TypeName>System.String</rd:TypeName>
+        </Field>
+        <Field Name="Description">
+          <DataField>Description</DataField>
+          <rd:TypeName>System.String</rd:TypeName>
+        </Field>
+      </Fields>
+    </DataSet>
+    <DataSet Name="AcademicYearCur">
+      <Query>
+        <DataSourceName>EBSReporting</DataSourceName>
+        <CommandText>SELECT DISTINCT
+	Code = ENR.AcademicYearID,
+	Description = ENR.AcademicYearID
+FROM dbo.Enrolment ENR
+WHERE
+	ENR.AcademicYearID =
+		CASE
+			WHEN MONTH ( GETDATE() ) &gt;= 8 THEN RIGHT ( CAST ( YEAR ( GETDATE() ) AS VARCHAR(4) ), 2 ) + '/' + RIGHT ( CAST ( YEAR ( GETDATE() ) + 1 AS VARCHAR(4) ), 2 )
+			ELSE RIGHT ( CAST ( YEAR ( GETDATE() ) - 1 AS VARCHAR(4) ), 2 ) + '/' + RIGHT ( CAST ( YEAR ( GETDATE() ) AS VARCHAR(4) ), 2 )
+		END
+ORDER BY
+	ENR.AcademicYearID</CommandText>
+      </Query>
+      <Fields>
+        <Field Name="Code">
+          <DataField>Code</DataField>
+          <rd:TypeName>System.String</rd:TypeName>
+        </Field>
+        <Field Name="Description">
+          <DataField>Description</DataField>
+          <rd:TypeName>System.String</rd:TypeName>
+        </Field>
+      </Fields>
+    </DataSet>
+    <DataSet Name="OverdueAmount">
+      <Query>
+        <DataSourceName>EBSReporting</DataSourceName>
+        <QueryParameters>
+          <QueryParameter Name="@AcademicYear">
+            <Value>=Parameters!AcademicYear.Value</Value>
+          </QueryParameter>
+          <QueryParameter Name="@OverdueOnly">
+            <Value>=Parameters!OverdueOnly.Value</Value>
+          </QueryParameter>
+          <QueryParameter Name="@Standard">
+            <Value>=Parameters!Standard.Value</Value>
+          </QueryParameter>
+        </QueryParameters>
+        <CommandText>/*
+DECLARE @AcademicYear VARCHAR(5) = '25/26'
+DECLARE @OverdueOnly INT = -1
+DECLARE @Standard VARCHAR(3) = 'ALL'
+*/
+
+SELECT
+	Code = -1,
+	Description  = '-- All Records --'
+
+UNION ALL
+
+SELECT DISTINCT
+	Code = 
+		CASE
+			WHEN ENR.CompletionStatusCode = '2' THEN 13
+			WHEN
+				ENR.CompletionStatusCode = '1'
+				AND COALESCE ( ENR.OutcomeCode, '9' ) = '8' THEN 12
+			WHEN ENR.CompletionStatusCode = '3' THEN 1
+			WHEN ENR.CompletionStatusCode = '6' THEN 2
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt;= CAST ( DATEADD ( DAY, 180, ENR.PlannedEndDate ) AS DATE ) THEN 8
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt;= CAST ( DATEADD ( DAY, 90, ENR.PlannedEndDate ) AS DATE ) THEN 7
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt;= CAST ( DATEADD ( DAY, 60, ENR.PlannedEndDate ) AS DATE ) THEN 6
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt;= CAST ( DATEADD ( DAY, 30, ENR.PlannedEndDate ) AS DATE ) THEN 5
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt; CAST ( DATEADD ( DAY, 0, ENR.PlannedEndDate ) AS DATE ) THEN 4
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt; CAST ( DATEADD ( DAY, -30, ENR.PlannedEndDate ) AS DATE ) THEN 11
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt; CAST ( DATEADD ( DAY, -60, ENR.PlannedEndDate ) AS DATE ) THEN 10
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt; CAST ( DATEADD ( DAY, -90, ENR.PlannedEndDate ) AS DATE ) THEN 9
+			ELSE 3
+		END,
+	Description = 
+		CASE
+			WHEN ENR.CompletionStatusCode = '2' THEN 'Completed'
+			WHEN
+				ENR.CompletionStatusCode = '1'
+				AND COALESCE ( ENR.OutcomeCode, '9' ) = '8' THEN 'In Gateway'
+			WHEN ENR.CompletionStatusCode = '3' THEN 'Withdrawn'
+			WHEN ENR.CompletionStatusCode = '6' THEN 'Break in Learning'
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt;= CAST ( DATEADD ( DAY, 180, ENR.PlannedEndDate ) AS DATE ) THEN '180+ Days'
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt;= CAST ( DATEADD ( DAY, 90, ENR.PlannedEndDate ) AS DATE ) THEN '90-179 Days'
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt;= CAST ( DATEADD ( DAY, 60, ENR.PlannedEndDate ) AS DATE ) THEN '60-89 Days'
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt;= CAST ( DATEADD ( DAY, 30, ENR.PlannedEndDate ) AS DATE ) THEN '30-59 Days'
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt; CAST ( DATEADD ( DAY, 0, ENR.PlannedEndDate ) AS DATE ) THEN '1-29 Days'
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt; CAST ( DATEADD ( DAY, -30, ENR.PlannedEndDate ) AS DATE ) THEN '1-29 Days'
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt; CAST ( DATEADD ( DAY, -60, ENR.PlannedEndDate ) AS DATE ) THEN '30-59 Days'
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt; CAST ( DATEADD ( DAY, -90, ENR.PlannedEndDate ) AS DATE ) THEN '60-89 Days'
+			ELSE 'Not Overdue'
+		END
+FROM Enrolment ENR
+INNER JOIN (
+	SELECT
+		ENR.EnrolmentID,
+		ENR.LearnRefNumber,
+		ENR.StandardCode,
+		ENR.CompletionStatusCode,
+		StartDate = COALESCE ( ENR.OriginalStartDate, ENR.StartDate ),
+		RowNum = 
+			ROW_NUMBER () OVER (
+				PARTITION BY
+					ENR.LearnRefNumber,
+					ENR.StandardCode,
+					COALESCE ( ENR.OriginalStartDate, ENR.StartDate )
+				ORDER BY
+					ENR.CompletionStatusCode,
+					ENR.StartDate DESC
+			)
+	FROM Enrolment ENR
+	WHERE
+		ENR.AcademicYearID = @AcademicYear
+	AND ENR.IncludeInILR = 'Y'
+	AND (
+		ENR.FundStream = '36'
+		OR (
+			ENR.FundStream = '35'
+			AND ENR.ProgTypeID IS NOT NULL
+		)
+	)
+	AND ENR.LearningAimCode = 'ZPROG001'
+) ACT
+	ON ACT.LearnRefNumber = ENR.LearnRefNumber
+	AND ACT.EnrolmentID = ENR.EnrolmentID
+	AND ACT.RowNum = 1
+
+WHERE
+	ENR.AcademicYearID = @AcademicYear
+	AND ENR.IncludeInILR = 'Y'
+	AND (
+		ENR.CountAsStart = 'Y'
+		OR ENR.CompletionStatusCode = '6'
+	)
+	AND (
+		ENR.FundStream = '36'
+		OR (
+			ENR.FundStream = '35'
+			AND ENR.ProgTypeID IS NOT NULL
+		)
+	)
+	AND ENR.LearningAimCode = 'ZPROG001'
+	AND (
+		CASE
+			WHEN ENR.CompletionStatusCode = '2' THEN 7
+			WHEN
+				ENR.CompletionStatusCode = '1'
+				AND COALESCE ( ENR.OutcomeCode, '9' ) = '8' THEN 6
+			WHEN ENR.CompletionStatusCode = '3' THEN 1
+			WHEN ENR.CompletionStatusCode = '6' THEN 2
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt;= CAST ( DATEADD ( DAY, 180, ENR.PlannedEndDate ) AS DATE ) THEN 4
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt;= CAST ( DATEADD ( DAY, 90, ENR.PlannedEndDate ) AS DATE ) THEN 4
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt;= CAST ( DATEADD ( DAY, 60, ENR.PlannedEndDate ) AS DATE ) THEN 4
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt;= CAST ( DATEADD ( DAY, 30, ENR.PlannedEndDate ) AS DATE ) THEN 4
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt; CAST ( DATEADD ( DAY, 0, ENR.PlannedEndDate ) AS DATE ) THEN 4
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt; CAST ( DATEADD ( DAY, -30, ENR.PlannedEndDate ) AS DATE ) THEN 5
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt; CAST ( DATEADD ( DAY, -60, ENR.PlannedEndDate ) AS DATE ) THEN 5
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt; CAST ( DATEADD ( DAY, -90, ENR.PlannedEndDate ) AS DATE ) THEN 5
+			ELSE 3
+		END IN ( @OverdueOnly )
+		OR -1 IN ( @OverdueOnly )
+	)
+	AND ( ENR.StandardCode IN ( @Standard ) OR 'ALL' IN ( @Standard ) )
+
+ORDER BY
+	Code</CommandText>
+      </Query>
+      <Fields>
+        <Field Name="Code">
+          <DataField>Code</DataField>
+          <rd:TypeName>System.Int32</rd:TypeName>
+        </Field>
+        <Field Name="Description">
+          <DataField>Description</DataField>
+          <rd:TypeName>System.String</rd:TypeName>
+        </Field>
+      </Fields>
+    </DataSet>
+    <DataSet Name="Standard">
+      <Query>
+        <DataSourceName>EBSReporting</DataSourceName>
+        <QueryParameters>
+          <QueryParameter Name="@AcademicYear">
+            <Value>=Parameters!AcademicYear.Value</Value>
+          </QueryParameter>
+          <QueryParameter Name="@OverdueOnly">
+            <Value>=Parameters!OverdueOnly.Value</Value>
+          </QueryParameter>
+        </QueryParameters>
+        <CommandText>/*
+DECLARE @AcademicYear VARCHAR(5) = '25/26'
+DECLARE @OverdueOnly INT = -1
+*/
+
+
+SELECT
+	Code = 'ALL',
+	Description = '-- All Standards --'
+
+UNION ALL
+
+SELECT DISTINCT
+	Code = ENR.StandardCode,
+	Description = ENR.StandardName + ' (' + ENR.StandardCode + ')'
+FROM Enrolment ENR
+INNER JOIN (
+	SELECT
+		ENR.EnrolmentID,
+		ENR.LearnRefNumber,
+		ENR.StandardCode,
+		ENR.CompletionStatusCode,
+		StartDate = COALESCE ( ENR.OriginalStartDate, ENR.StartDate ),
+		RowNum = 
+			ROW_NUMBER () OVER (
+				PARTITION BY
+					ENR.LearnRefNumber,
+					ENR.StandardCode,
+					COALESCE ( ENR.OriginalStartDate, ENR.StartDate )
+				ORDER BY
+					ENR.CompletionStatusCode,
+					ENR.StartDate DESC
+			)
+	FROM Enrolment ENR
+	WHERE
+		ENR.AcademicYearID = @AcademicYear
+	AND ENR.IncludeInILR = 'Y'
+	AND (
+		ENR.FundStream = '36'
+		OR (
+			ENR.FundStream = '35'
+			AND ENR.ProgTypeID IS NOT NULL
+		)
+	)
+	AND ENR.LearningAimCode = 'ZPROG001'
+) ACT
+	ON ACT.LearnRefNumber = ENR.LearnRefNumber
+	AND ACT.EnrolmentID = ENR.EnrolmentID
+	AND ACT.RowNum = 1
+
+WHERE
+	ENR.AcademicYearID = @AcademicYear
+	AND ENR.IncludeInILR = 'Y'
+	AND (
+		ENR.CountAsStart = 'Y'
+		OR ENR.CompletionStatusCode = '6'
+	)
+	AND (
+		ENR.FundStream = '36'
+		OR (
+			ENR.FundStream = '35'
+			AND ENR.ProgTypeID IS NOT NULL
+		)
+	)
+	AND ENR.LearningAimCode = 'ZPROG001'
+	AND (
+		CASE
+			WHEN ENR.CompletionStatusCode = '2' THEN 7
+			WHEN
+				ENR.CompletionStatusCode = '1'
+				AND COALESCE ( ENR.OutcomeCode, '9' ) = '8' THEN 6
+			WHEN ENR.CompletionStatusCode = '3' THEN 1
+			WHEN ENR.CompletionStatusCode = '6' THEN 2
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt;= CAST ( DATEADD ( DAY, 180, ENR.PlannedEndDate ) AS DATE ) THEN 4
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt;= CAST ( DATEADD ( DAY, 90, ENR.PlannedEndDate ) AS DATE ) THEN 4
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt;= CAST ( DATEADD ( DAY, 60, ENR.PlannedEndDate ) AS DATE ) THEN 4
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt;= CAST ( DATEADD ( DAY, 30, ENR.PlannedEndDate ) AS DATE ) THEN 4
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt; CAST ( DATEADD ( DAY, 0, ENR.PlannedEndDate ) AS DATE ) THEN 4
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt; CAST ( DATEADD ( DAY, -30, ENR.PlannedEndDate ) AS DATE ) THEN 5
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt; CAST ( DATEADD ( DAY, -60, ENR.PlannedEndDate ) AS DATE ) THEN 5
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt; CAST ( DATEADD ( DAY, -90, ENR.PlannedEndDate ) AS DATE ) THEN 5
+			ELSE 3
+		END IN ( @OverdueOnly )
+		OR -1 IN ( @OverdueOnly )
+	)
+
+ORDER BY
+	Description</CommandText>
+      </Query>
+      <Fields>
+        <Field Name="Code">
+          <DataField>Code</DataField>
+          <rd:TypeName>System.String</rd:TypeName>
+        </Field>
+        <Field Name="Description">
+          <DataField>Description</DataField>
+          <rd:TypeName>System.String</rd:TypeName>
+        </Field>
+      </Fields>
+    </DataSet>
+    <DataSet Name="OverdueOnly">
+      <Query>
+        <DataSourceName>EBSReporting</DataSourceName>
+        <CommandText>SELECT
+	Code = -1,
+	Dexcription = '-- All Records --'
+
+UNION ALL
+
+SELECT
+	Code = 1,
+	Dexcription = 'Withdrawn'
+
+UNION ALL
+
+SELECT
+	Code = 2,
+	Dexcription = 'Break in Learning'
+
+UNION ALL
+
+SELECT
+	Code = 3,
+	Dexcription = 'Not Overdue'
+
+UNION ALL
+
+SELECT
+	Code = 4,
+	Dexcription = 'Overdue'
+
+UNION ALL
+
+SELECT
+	Code = 5,
+	Dexcription = 'Ending Soon'
+
+UNION ALL
+
+SELECT
+	Code = 6,
+	Dexcription = 'In Gateway'
+
+UNION ALL
+
+SELECT
+	Code = 7,
+	Dexcription = 'Completed'</CommandText>
+      </Query>
+      <Fields>
+        <Field Name="Code">
+          <DataField>Code</DataField>
+          <rd:TypeName>System.Int32</rd:TypeName>
+        </Field>
+        <Field Name="Dexcription">
+          <DataField>Dexcription</DataField>
+          <rd:TypeName>System.String</rd:TypeName>
+        </Field>
+      </Fields>
+    </DataSet>
+    <DataSet Name="TrainingConsultant">
+      <Query>
+        <DataSourceName>EBSReporting</DataSourceName>
+        <QueryParameters>
+          <QueryParameter Name="@AcademicYear">
+            <Value>=Parameters!AcademicYear.Value</Value>
+          </QueryParameter>
+          <QueryParameter Name="@OverdueOnly">
+            <Value>=Parameters!OverdueOnly.Value</Value>
+          </QueryParameter>
+          <QueryParameter Name="@Standard">
+            <Value>=Parameters!Standard.Value</Value>
+          </QueryParameter>
+          <QueryParameter Name="@OverdueAmount">
+            <Value>=Parameters!OverdueAmount.Value</Value>
+          </QueryParameter>
+        </QueryParameters>
+        <CommandText>/*
+DECLARE @AcademicYear VARCHAR(5) = '25/26'
+DECLARE @OverdueOnly INT = -1
+DECLARE @Standard VARCHAR(3) = 'ALL'
+DECLARE @OverdueAmount INT = -1
+*/
+
+SELECT
+	Code = 'ALL',
+	Description = '-- All Training Consultants --'
+
+UNION ALL
+
+SELECT DISTINCT
+	Code = COALESCE ( ENR.TrainingConsultant1StaffRef, '0' ),
+	Description = COALESCE ( ENR.TrainingConsultant1StaffName, '-- No Training Consultant Specified --' )
+FROM Enrolment ENR
+INNER JOIN (
+	SELECT
+		ENR.EnrolmentID,
+		ENR.LearnRefNumber,
+		ENR.StandardCode,
+		ENR.CompletionStatusCode,
+		StartDate = COALESCE ( ENR.OriginalStartDate, ENR.StartDate ),
+		RowNum = 
+			ROW_NUMBER () OVER (
+				PARTITION BY
+					ENR.LearnRefNumber,
+					ENR.StandardCode,
+					COALESCE ( ENR.OriginalStartDate, ENR.StartDate )
+				ORDER BY
+					ENR.CompletionStatusCode,
+					ENR.StartDate DESC
+			)
+	FROM Enrolment ENR
+	WHERE
+		ENR.AcademicYearID = @AcademicYear
+	AND ENR.IncludeInILR = 'Y'
+	AND (
+		ENR.FundStream = '36'
+		OR (
+			ENR.FundStream = '35'
+			AND ENR.ProgTypeID IS NOT NULL
+		)
+	)
+	AND ENR.LearningAimCode = 'ZPROG001'
+) ACT
+	ON ACT.LearnRefNumber = ENR.LearnRefNumber
+	AND ACT.EnrolmentID = ENR.EnrolmentID
+	AND ACT.RowNum = 1
+
+WHERE
+	ENR.AcademicYearID = @AcademicYear
+	AND ENR.IncludeInILR = 'Y'
+	AND (
+		ENR.CountAsStart = 'Y'
+		OR ENR.CompletionStatusCode = '6'
+	)
+	AND (
+		ENR.FundStream = '36'
+		OR (
+			ENR.FundStream = '35'
+			AND ENR.ProgTypeID IS NOT NULL
+		)
+	)
+	AND ENR.LearningAimCode = 'ZPROG001'
+	AND (
+		CASE
+			WHEN ENR.CompletionStatusCode = '2' THEN 7
+			WHEN
+				ENR.CompletionStatusCode = '1'
+				AND COALESCE ( ENR.OutcomeCode, '9' ) = '8' THEN 6
+			WHEN ENR.CompletionStatusCode = '3' THEN 1
+			WHEN ENR.CompletionStatusCode = '6' THEN 2
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt;= CAST ( DATEADD ( DAY, 180, ENR.PlannedEndDate ) AS DATE ) THEN 4
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt;= CAST ( DATEADD ( DAY, 90, ENR.PlannedEndDate ) AS DATE ) THEN 4
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt;= CAST ( DATEADD ( DAY, 60, ENR.PlannedEndDate ) AS DATE ) THEN 4
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt;= CAST ( DATEADD ( DAY, 30, ENR.PlannedEndDate ) AS DATE ) THEN 4
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt; CAST ( DATEADD ( DAY, 0, ENR.PlannedEndDate ) AS DATE ) THEN 4
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt; CAST ( DATEADD ( DAY, -30, ENR.PlannedEndDate ) AS DATE ) THEN 5
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt; CAST ( DATEADD ( DAY, -60, ENR.PlannedEndDate ) AS DATE ) THEN 5
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt; CAST ( DATEADD ( DAY, -90, ENR.PlannedEndDate ) AS DATE ) THEN 5
+			ELSE 3
+		END IN ( @OverdueOnly )
+		OR -1 IN ( @OverdueOnly )
+	)
+	AND ( ENR.StandardCode IN ( @Standard ) OR 'ALL' IN ( @Standard ) )
+	AND (
+		CASE
+			WHEN ENR.CompletionStatusCode = '2' THEN 13
+			WHEN
+				ENR.CompletionStatusCode = '1'
+				AND COALESCE ( ENR.OutcomeCode, '9' ) = '8' THEN 12
+			WHEN ENR.CompletionStatusCode = '3' THEN 1
+			WHEN ENR.CompletionStatusCode = '6' THEN 2
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt;= CAST ( DATEADD ( DAY, 180, ENR.PlannedEndDate ) AS DATE ) THEN 8
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt;= CAST ( DATEADD ( DAY, 90, ENR.PlannedEndDate ) AS DATE ) THEN 7
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt;= CAST ( DATEADD ( DAY, 60, ENR.PlannedEndDate ) AS DATE ) THEN 6
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt;= CAST ( DATEADD ( DAY, 30, ENR.PlannedEndDate ) AS DATE ) THEN 5
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt; CAST ( DATEADD ( DAY, 0, ENR.PlannedEndDate ) AS DATE ) THEN 4
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt; CAST ( DATEADD ( DAY, -30, ENR.PlannedEndDate ) AS DATE ) THEN 11
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt; CAST ( DATEADD ( DAY, -60, ENR.PlannedEndDate ) AS DATE ) THEN 10
+			WHEN CAST ( COALESCE ( ENR.ActualEndDate, GETDATE() ) AS DATE ) &gt; CAST ( DATEADD ( DAY, -90, ENR.PlannedEndDate ) AS DATE ) THEN 9
+			ELSE 3
+		END IN ( @OverdueAmount ) OR -1 IN ( @OverdueAmount )
+	)
+
+ORDER BY
+	Description</CommandText>
+      </Query>
+      <Fields>
+        <Field Name="Code">
+          <DataField>Code</DataField>
+          <rd:TypeName>System.String</rd:TypeName>
+        </Field>
+        <Field Name="Description">
+          <DataField>Description</DataField>
+          <rd:TypeName>System.String</rd:TypeName>
+        </Field>
+      </Fields>
+    </DataSet>
+  </DataSets>
+  <ReportSections>
+    <ReportSection>
+      <Body>
+        <ReportItems>
+          <Tablix Name="Tablix4">
+            <TablixCorner>
+              <TablixCornerRows>
+                <TablixCornerRow>
+                  <TablixCornerCell>
+                    <CellContents>
+                      <Textbox Name="Textbox124">
+                        <CanGrow>true</CanGrow>
+                        <KeepTogether>true</KeepTogether>
+                        <Paragraphs>
+                          <Paragraph>
+                            <TextRuns>
+                              <TextRun>
+                                <Value>Apprenticeship Standards</Value>
+                                <Style>
+                                  <FontFamily>Calibri</FontFamily>
+                                  <FontWeight>Bold</FontWeight>
+                                </Style>
+                              </TextRun>
+                            </TextRuns>
+                            <Style>
+                              <TextAlign>Center</TextAlign>
+                            </Style>
+                          </Paragraph>
+                        </Paragraphs>
+                        <rd:DefaultName>Textbox124</rd:DefaultName>
+                        <Style>
+                          <Border>
+                            <Color>#ffffff</Color>
+                            <Style>Solid</Style>
+                          </Border>
+                          <TopBorder>
+                            <Style>Solid</Style>
+                            <Width>1pt</Width>
+                          </TopBorder>
+                          <BottomBorder>
+                            <Style>Solid</Style>
+                            <Width>1pt</Width>
+                          </BottomBorder>
+                          <LeftBorder>
+                            <Style>Solid</Style>
+                            <Width>1pt</Width>
+                          </LeftBorder>
+                          <RightBorder>
+                            <Style>Solid</Style>
+                            <Width>1pt</Width>
+                          </RightBorder>
+                          <BackgroundColor>#00b0ad</BackgroundColor>
+                          <VerticalAlign>Bottom</VerticalAlign>
+                          <PaddingLeft>2pt</PaddingLeft>
+                          <PaddingRight>2pt</PaddingRight>
+                          <PaddingTop>2pt</PaddingTop>
+                          <PaddingBottom>2pt</PaddingBottom>
+                        </Style>
+                      </Textbox>
+                      <ColSpan>3</ColSpan>
+                    </CellContents>
+                  </TablixCornerCell>
+                  <TablixCornerCell />
+                  <TablixCornerCell />
+                </TablixCornerRow>
+                <TablixCornerRow>
+                  <TablixCornerCell>
+                    <CellContents>
+                      <Textbox Name="Textbox452">
+                        <CanGrow>true</CanGrow>
+                        <KeepTogether>true</KeepTogether>
+                        <Paragraphs>
+                          <Paragraph>
+                            <TextRuns>
+                              <TextRun>
+                                <Value>Standard</Value>
+                                <Style>
+                                  <FontFamily>Calibri</FontFamily>
+                                  <FontWeight>Bold</FontWeight>
+                                  <Color>White</Color>
+                                </Style>
+                              </TextRun>
+                            </TextRuns>
+                            <Style />
+                          </Paragraph>
+                          <Paragraph>
+                            <TextRuns>
+                              <TextRun>
+                                <Value>Code</Value>
+                                <Style>
+                                  <FontFamily>Calibri</FontFamily>
+                                  <FontWeight>Bold</FontWeight>
+                                  <Color>White</Color>
+                                </Style>
+                              </TextRun>
+                            </TextRuns>
+                            <Style />
+                          </Paragraph>
+                        </Paragraphs>
+                        <rd:DefaultName>Textbox450</rd:DefaultName>
+                        <Style>
+                          <Border>
+                            <Color>#ffffff</Color>
+                            <Style>Solid</Style>
+                          </Border>
+                          <TopBorder>
+                            <Style>Solid</Style>
+                            <Width>1pt</Width>
+                          </TopBorder>
+                          <BottomBorder>
+                            <Style>Solid</Style>
+                            <Width>1pt</Width>
+                          </BottomBorder>
+                          <LeftBorder>
+                            <Style>Solid</Style>
+                            <Width>1pt</Width>
+                          </LeftBorder>
+                          <RightBorder>
+                            <Style>Solid</Style>
+                            <Width>1pt</Width>
+                          </RightBorder>
+                          <BackgroundColor>#88527a</BackgroundColor>
+                          <VerticalAlign>Bottom</VerticalAlign>
+                          <PaddingLeft>2pt</PaddingLeft>
+                          <PaddingRight>2pt</PaddingRight>
+                          <PaddingTop>2pt</PaddingTop>
+                          <PaddingBottom>2pt</PaddingBottom>
+                        </Style>
+                      </Textbox>
+                    </CellContents>
+                  </TablixCornerCell>
+                  <TablixCornerCell>
+                    <CellContents>
+                      <Textbox Name="Textbox504">
+                        <CanGrow>true</CanGrow>
+                        <KeepTogether>true</KeepTogether>
+                        <Paragraphs>
+                          <Paragraph>
+                            <TextRuns>
+                              <TextRun>
+                                <Value>Standard</Value>
+                                <Style>
+                                  <FontFamily>Calibri</FontFamily>
+                                  <FontWeight>Bold</FontWeight>
+                                  <Color>White</Color>
+                                </Style>
+                              </TextRun>
+                            </TextRuns>
+                            <Style />
+                          </Paragraph>
+                          <Paragraph>
+                            <TextRuns>
+                              <TextRun>
+                                <Value>Title</Value>
+                                <Style>
+                                  <FontFamily>Calibri</FontFamily>
+                                  <FontWeight>Bold</FontWeight>
+                                  <Color>White</Color>
+                                </Style>
+                              </TextRun>
+                            </TextRuns>
+                            <Style />
+                          </Paragraph>
+                        </Paragraphs>
+                        <rd:DefaultName>Textbox501</rd:DefaultName>
+                        <Style>
+                          <Border>
+                            <Color>#ffffff</Color>
+                            <Style>Solid</Style>
+                          </Border>
+                          <TopBorder>
+                            <Style>Solid</Style>
+                            <Width>1pt</Width>
+                          </TopBorder>
+                          <BottomBorder>
+                            <Style>Solid</Style>
+                            <Width>1pt</Width>
+                          </BottomBorder>
+                          <LeftBorder>
+                            <Style>Solid</Style>
+                            <Width>1pt</Width>
+                          </LeftBorder>
+                          <RightBorder>
+                            <Style>Solid</Style>
+                            <Width>1pt</Width>
+                          </RightBorder>
+                          <BackgroundColor>#88527a</BackgroundColor>
+                          <VerticalAlign>Bottom</VerticalAlign>
+                          <PaddingLeft>2pt</PaddingLeft>
+                          <PaddingRight>2pt</PaddingRight>
+                          <PaddingTop>2pt</PaddingTop>
+                          <PaddingBottom>2pt</PaddingBottom>
+                        </Style>
+                      </Textbox>
+                    </CellContents>
+                  </TablixCornerCell>
+                  <TablixCornerCell>
+                    <CellContents>
+                      <Textbox Name="Textbox501">
+                        <CanGrow>true</CanGrow>
+                        <KeepTogether>true</KeepTogether>
+                        <Paragraphs>
+                          <Paragraph>
+                            <TextRuns>
+                              <TextRun>
+                                <Value>Total Apps</Value>
+                                <Style>
+                                  <FontFamily>Calibri</FontFamily>
+                                  <FontWeight>Bold</FontWeight>
+                                  <Color>White</Color>
+                                </Style>
+                              </TextRun>
+                            </TextRuns>
+                            <Style />
+                          </Paragraph>
+                        </Paragraphs>
+                        <rd:DefaultName>Textbox483</rd:DefaultName>
+                        <Style>
+                          <Border>
+                            <Color>#ffffff</Color>
+                            <Style>Solid</Style>
+                          </Border>
+                          <TopBorder>
+                            <Style>Solid</Style>
+                            <Width>1pt</Width>
+                          </TopBorder>
+                          <BottomBorder>
+                            <Style>Solid</Style>
+                            <Width>1pt</Width>
+                          </BottomBorder>
+                          <LeftBorder>
+                            <Style>Solid</Style>
+                            <Width>1pt</Width>
+                          </LeftBorder>
+                          <RightBorder>
+                            <Style>Solid</Style>
+                            <Width>1pt</Width>
+                          </RightBorder>
+                          <BackgroundColor>#88527a</BackgroundColor>
+                          <VerticalAlign>Bottom</VerticalAlign>
+                          <PaddingLeft>2pt</PaddingLeft>
+                          <PaddingRight>2pt</PaddingRight>
+                          <PaddingTop>2pt</PaddingTop>
+                          <PaddingBottom>2pt</PaddingBottom>
+                        </Style>
+                      </Textbox>
+                    </CellContents>
+                  </TablixCornerCell>
+                </TablixCornerRow>
+              </TablixCornerRows>
+            </TablixCorner>
+            <TablixBody>
+              <TablixColumns>
+                <TablixColumn>
+                  <Width>0.1cm</Width>
+                </TablixColumn>
+                <TablixColumn>
+                  <Width>1.2cm</Width>
+                </TablixColumn>
+                <TablixColumn>
+                  <Width>1cm</Width>
+                </TablixColumn>
+                <TablixColumn>
+                  <Width>1.1cm</Width>
+                </TablixColumn>
+              </TablixColumns>
+              <TablixRows>
+                <TablixRow>
+                  <Height>0.5cm</Height>
+                  <TablixCells>
+                    <TablixCell>
+                      <CellContents>
+                        <Textbox Name="Textbox137">
+                          <KeepTogether>true</KeepTogether>
+                          <Paragraphs>
+                            <Paragraph>
+                              <TextRuns>
+                                <TextRun>
+                                  <Value />
+                                  <Style>
+                                    <FontFamily>Calibri</FontFamily>
+                                    <FontWeight>Bold</FontWeight>
+                                    <Color>White</Color>
+                                  </Style>
+                                </TextRun>
+                              </TextRuns>
+                              <Style />
+                            </Paragraph>
+                          </Paragraphs>
+                          <rd:DefaultName>Textbox134</rd:DefaultName>
+                          <Style>
+                            <Border>
+                              <Color>#ffffff</Color>
+                              <Style>Solid</Style>
+                            </Border>
+                            <TopBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </TopBorder>
+                            <BottomBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </BottomBorder>
+                            <LeftBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </LeftBorder>
+                            <RightBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </RightBorder>
+                            <BackgroundColor>#00b0ad</BackgroundColor>
+                            <VerticalAlign>Bottom</VerticalAlign>
+                            <PaddingLeft>2pt</PaddingLeft>
+                            <PaddingRight>2pt</PaddingRight>
+                            <PaddingTop>2pt</PaddingTop>
+                            <PaddingBottom>2pt</PaddingBottom>
+                          </Style>
+                        </Textbox>
+                      </CellContents>
+                    </TablixCell>
+                    <TablixCell>
+                      <CellContents>
+                        <Textbox Name="LearnRefNumber1">
+                          <CanGrow>true</CanGrow>
+                          <KeepTogether>true</KeepTogether>
+                          <Paragraphs>
+                            <Paragraph>
+                              <TextRuns>
+                                <TextRun>
+                                  <Value>=Count(Fields!LearnRefNumber.Value)</Value>
+                                  <Style>
+                                    <FontFamily>Calibri</FontFamily>
+                                    <FontSize>8pt</FontSize>
+                                    <FontWeight>Normal</FontWeight>
+                                    <Format>#,0</Format>
+                                    <TextDecoration>Underline</TextDecoration>
+                                    <Color>Blue</Color>
+                                  </Style>
+                                </TextRun>
+                              </TextRuns>
+                              <Style />
+                            </Paragraph>
+                          </Paragraphs>
+                          <rd:DefaultName>LearnRefNumber1</rd:DefaultName>
+                          <ActionInfo>
+                            <Actions>
+                              <Action>
+                                <Drillthrough>
+                                  <ReportName>APP001b - Overdue Apprenticeships - Detail</ReportName>
+                                  <Parameters>
+                                    <Parameter Name="AcademicYear">
+                                      <Value>=Parameters!AcademicYear.Value</Value>
+                                    </Parameter>
+                                    <Parameter Name="OverdueOnly">
+                                      <Value>=Fields!OverdueCategoryOrder.Value</Value>
+                                    </Parameter>
+                                    <Parameter Name="Standard">
+                                      <Value>=Fields!StandardCode.Value</Value>
+                                    </Parameter>
+                                    <Parameter Name="OverdueAmount">
+                                      <Value>=Fields!OverdueAmountOrder.Value</Value>
+                                    </Parameter>
+                                    <Parameter Name="TrainingConsultant1">
+                                      <Value>=Parameters!TrainingConsultant1.Value</Value>
+                                    </Parameter>
+                                  </Parameters>
+                                </Drillthrough>
+                              </Action>
+                            </Actions>
+                          </ActionInfo>
+                          <Style>
+                            <Border>
+                              <Color>#88527a</Color>
+                              <Style>Solid</Style>
+                            </Border>
+                            <BackgroundColor>=IIF(Fields!OverdueAmountOrder.Value = 1, "#F48FB1",
+IIF(Fields!OverdueAmountOrder.Value = 2, "#CE93D8",
+IIF(Fields!OverdueAmountOrder.Value = 3, "#A5D6A7",
+IIF(Fields!OverdueAmountOrder.Value = 4, "#F9E79F",
+IIF(Fields!OverdueAmountOrder.Value = 5, "#FFE082",
+IIF(Fields!OverdueAmountOrder.Value = 6, "#FFCC80",
+IIF(Fields!OverdueAmountOrder.Value = 7, "#FFAB91",
+IIF(Fields!OverdueAmountOrder.Value = 8, "#EF9A9A",
+IIF(Fields!OverdueAmountOrder.Value = 9, "#C5E1A5",
+IIF(Fields!OverdueAmountOrder.Value = 10, "#E6EE9C",
+IIF(Fields!OverdueAmountOrder.Value = 11, "#FFF59D",
+IIF(Fields!OverdueAmountOrder.Value = 12, "#80DEEA",
+IIF(Fields!OverdueAmountOrder.Value = 13, "#9FA8DA",
+"#AEB6BF")
+))))))))))))</BackgroundColor>
+                            <PaddingLeft>2pt</PaddingLeft>
+                            <PaddingRight>2pt</PaddingRight>
+                            <PaddingTop>2pt</PaddingTop>
+                            <PaddingBottom>2pt</PaddingBottom>
+                          </Style>
+                        </Textbox>
+                      </CellContents>
+                    </TablixCell>
+                    <TablixCell>
+                      <CellContents>
+                        <Textbox Name="LearnRefNumber3">
+                          <CanGrow>true</CanGrow>
+                          <KeepTogether>true</KeepTogether>
+                          <Paragraphs>
+                            <Paragraph>
+                              <TextRuns>
+                                <TextRun>
+                                  <Value>=Count(Fields!LearnRefNumber.Value)</Value>
+                                  <Style>
+                                    <FontFamily>Calibri</FontFamily>
+                                    <FontSize>8pt</FontSize>
+                                    <FontWeight>Bold</FontWeight>
+                                    <Format>#,0</Format>
+                                    <TextDecoration>Underline</TextDecoration>
+                                    <Color>Blue</Color>
+                                  </Style>
+                                </TextRun>
+                              </TextRuns>
+                              <Style />
+                            </Paragraph>
+                          </Paragraphs>
+                          <rd:DefaultName>LearnRefNumber1</rd:DefaultName>
+                          <ActionInfo>
+                            <Actions>
+                              <Action>
+                                <Drillthrough>
+                                  <ReportName>APP001b - Overdue Apprenticeships - Detail</ReportName>
+                                  <Parameters>
+                                    <Parameter Name="AcademicYear">
+                                      <Value>=Parameters!AcademicYear.Value</Value>
+                                    </Parameter>
+                                    <Parameter Name="OverdueOnly">
+                                      <Value>=Fields!OverdueCategoryOrder.Value</Value>
+                                    </Parameter>
+                                    <Parameter Name="Standard">
+                                      <Value>=Fields!StandardCode.Value</Value>
+                                    </Parameter>
+                                    <Parameter Name="OverdueAmount">
+                                      <Value>-1</Value>
+                                    </Parameter>
+                                    <Parameter Name="TrainingConsultant1">
+                                      <Value>=Parameters!TrainingConsultant1.Value</Value>
+                                    </Parameter>
+                                  </Parameters>
+                                </Drillthrough>
+                              </Action>
+                            </Actions>
+                          </ActionInfo>
+                          <Style>
+                            <Border>
+                              <Color>#88527a</Color>
+                              <Style>Solid</Style>
+                            </Border>
+                            <BackgroundColor>=IIF(Fields!OverdueCategoryOrder.Value = 1, "#F06292",
+IIF(Fields!OverdueCategoryOrder.Value = 2, "#BA68C8",
+IIF(Fields!OverdueCategoryOrder.Value = 3, "#81C784",
+IIF(Fields!OverdueCategoryOrder.Value = 4, "#E57373",
+IIF(Fields!OverdueCategoryOrder.Value = 5, "#FFF176",
+IIF(Fields!OverdueCategoryOrder.Value = 6, "#4DD0E1",
+IIF(Fields!OverdueCategoryOrder.Value = 7, "#7986CB",
+"#AEB6BF")
+))))))</BackgroundColor>
+                            <PaddingLeft>2pt</PaddingLeft>
+                            <PaddingRight>2pt</PaddingRight>
+                            <PaddingTop>2pt</PaddingTop>
+                            <PaddingBottom>2pt</PaddingBottom>
+                          </Style>
+                        </Textbox>
+                      </CellContents>
+                    </TablixCell>
+                    <TablixCell>
+                      <CellContents>
+                        <Textbox Name="Textbox147">
+                          <CanGrow>true</CanGrow>
+                          <KeepTogether>true</KeepTogether>
+                          <Paragraphs>
+                            <Paragraph>
+                              <TextRuns>
+                                <TextRun>
+                                  <Value>=Count(Fields!LearnRefNumber.Value)
+/
+ReportItems!TotalApps.Value</Value>
+                                  <Style>
+                                    <FontFamily>Calibri</FontFamily>
+                                    <FontSize>8pt</FontSize>
+                                    <FontWeight>Bold</FontWeight>
+                                    <Format>0.0%</Format>
+                                  </Style>
+                                </TextRun>
+                              </TextRuns>
+                              <Style />
+                            </Paragraph>
+                          </Paragraphs>
+                          <rd:DefaultName>Textbox147</rd:DefaultName>
+                          <Style>
+                            <Border>
+                              <Color>#88527a</Color>
+                              <Style>Solid</Style>
+                            </Border>
+                            <BackgroundColor>=IIF(Fields!OverdueCategoryOrder.Value = 1, "#F06292",
+IIF(Fields!OverdueCategoryOrder.Value = 2, "#BA68C8",
+IIF(Fields!OverdueCategoryOrder.Value = 3, "#81C784",
+IIF(Fields!OverdueCategoryOrder.Value = 4, "#E57373",
+IIF(Fields!OverdueCategoryOrder.Value = 5, "#FFF176",
+IIF(Fields!OverdueCategoryOrder.Value = 6, "#4DD0E1",
+IIF(Fields!OverdueCategoryOrder.Value = 7, "#7986CB",
+"#AEB6BF")
+))))))</BackgroundColor>
+                            <PaddingLeft>2pt</PaddingLeft>
+                            <PaddingRight>2pt</PaddingRight>
+                            <PaddingTop>2pt</PaddingTop>
+                            <PaddingBottom>2pt</PaddingBottom>
+                          </Style>
+                        </Textbox>
+                      </CellContents>
+                    </TablixCell>
+                  </TablixCells>
+                </TablixRow>
+                <TablixRow>
+                  <Height>0.6cm</Height>
+                  <TablixCells>
+                    <TablixCell>
+                      <CellContents>
+                        <Textbox Name="Textbox135">
+                          <KeepTogether>true</KeepTogether>
+                          <Paragraphs>
+                            <Paragraph>
+                              <TextRuns>
+                                <TextRun>
+                                  <Value />
+                                  <Style>
+                                    <FontFamily>Calibri</FontFamily>
+                                    <FontWeight>Bold</FontWeight>
+                                    <Color>White</Color>
+                                  </Style>
+                                </TextRun>
+                              </TextRuns>
+                              <Style />
+                            </Paragraph>
+                          </Paragraphs>
+                          <rd:DefaultName>Textbox134</rd:DefaultName>
+                          <Style>
+                            <Border>
+                              <Color>#ffffff</Color>
+                              <Style>Solid</Style>
+                            </Border>
+                            <TopBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </TopBorder>
+                            <BottomBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </BottomBorder>
+                            <LeftBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </LeftBorder>
+                            <RightBorder>
+                              <Style>Solid</Style>
+                              <Width>1pt</Width>
+                            </RightBorder>
+                            <BackgroundColor>#00b0ad</BackgroundColor>
+                            <VerticalAlign>Bottom</VerticalAlign>
+                            <PaddingLeft>2pt</PaddingLeft>
+                            <PaddingRight>2pt</PaddingRight>
+                            <PaddingTop>2pt</PaddingTop>
+                            <PaddingBottom>2pt</PaddingBottom>
+                          </Style>
+                        </Textbox>
+                      </CellContents>
+                    </TablixCell>
+                    <TablixCell>
+                      <CellContents>
+                        <Textbox Name="LearnRefNumber2">
+                          <CanGrow>true</CanGrow>
+                          <KeepTogether>true</KeepTogether>
+                          <Paragraphs>
+                            <Paragraph>
+                              <TextRuns>
+                                <TextRun>
+                                  <Value>=Count(Fields!LearnRefNumber.Value)</Value>
+                                  <Style>
+                                    <FontFamily>Calibri</FontFamily>
+                                    <FontWeight>Bold</FontWeight>
+                                    <Format>#,0</Format>
+                                    <TextDecoration>Underline</TextDecoration>
+                                    <Color>White</Color>
+                                  </Style>
+                                </TextRun>
+                              </TextRuns>
+                              <Style />
+                            </Paragraph>
+                          </Paragraphs>
+                          <rd:DefaultName>LearnRefNumber2</rd:DefaultName>
+                          <ActionInfo>
+                            <Actions>
+                              <Action>
+                                <Drillthrough>
+                                  <ReportName>APP001b - Overdue Apprenticeships - Detail</ReportName>
+                                  <Parameters>
+                                    <Parameter Name="AcademicYear">
+                                      <Value>=Parameters!AcademicYear.Value</Value>
+                                    </Parameter>
+                                    <Parameter Name="OverdueOnly">
+                                      <Value>=Fields!OverdueCategoryOrder.Value</Value>
+                                    </Parameter>
+                                    <Parameter Name="Standard">
+                                      <Value>ALL</Value>
+                                    </Parameter>
+                                    <Parameter Name="OverdueAmount">
+                                      <Value>=Fields!OverdueAmountOrder.Value</Value>
+                                    </Parameter>
+                                    <Parameter Name="TrainingConsultant1">
+                                      <Value>=Parameters!TrainingConsultant1.Value</Value>
+                                    </Parameter>
+                                  </Parameters>
+                                </Drillthrough>
+                              </Action>
+                            </Actions>
+                          </ActionInfo>
+                          <Style>
+                            <Border>
+                              <Color>#ffffff</Color>
+                              <Style>Solid</Style>
+                            </Border>
+                            <BackgroundColor>#88527a</BackgroundColor>
+                            <PaddingLeft>2pt</PaddingLeft>
+                            <PaddingRight>2pt</PaddingRight>
+                            <PaddingTop>2pt</PaddingTop>
+                            <PaddingBottom>2pt</PaddingBottom>
+                          </Style>
+                        </Textbox>
+                      </CellContents>
+                    </TablixCell>
+                    <TablixCell>
+                      <CellContents>
+                        <Textbox Name="LearnRefNumber4">
+                          <CanGrow>true</CanGrow>
+                          <KeepTogether>true</KeepTogether>
+                          <Paragraphs>
+                            <Paragraph>
+                              <TextRuns>
+                                <TextRun>
+                                  <Value>=Count(Fields!LearnRefNumber.Value)</Value>
+                                  <Style>
+                                    <FontFamily>Calibri</FontFamily>
+                                    <FontWeight>Bold</FontWeight>
+                                    <Format>#,0</Format>
+                                    <TextDecoration>Underline</TextDecoration>
+                                    <Color>White</Color>
+                                  </Style>
+                                </TextRun>
+                              </TextRuns>
+                              <Style />
+                            </Paragraph>
+                          </Paragraphs>
+                          <rd:DefaultName>LearnRefNumber2</rd:DefaultName>
+                          <ActionInfo>
+                            <Actions>
+                              <Action>
+                                <Drillthrough>
+                                  <ReportName>APP001b - Overdue Apprenticeships - Detail</ReportName>
+                                  <Parameters>
+                                    <Parameter Name="AcademicYear">
+                                      <Value>=Parameters!AcademicYear.Value</Value>
+                                    </Parameter>
+                                    <Parameter Name="OverdueOnly">
+                                      <Value>=Fields!OverdueCategoryOrder.Value</Value>
+                                    </Parameter>
+                                    <Parameter Name="Standard">
+                                      <Value>ALL</Value>
+                                    </Parameter>
+                                    <Parameter Name="OverdueAmount">
+                                      <Value>-1</Value>
+                                    </Parameter>
+                                    <Parameter Name="TrainingConsultant1">
+                                      <Value>=Parameters!TrainingConsultant1.Value</Value>
+                                    </Parameter>
+                                  </Parameters>
+                                </Drillthrough>
+                              </Action>
+                            </Actions>
+                          </ActionInfo>
+                          <Style>
+                            <Border>
+                              <Color>#ffffff</Color>
+                              <Style>Solid</Style>
+                            </Border>
+                            <BackgroundColor>#88527a</BackgroundColor>
+                            <PaddingLeft>2pt</PaddingLeft>
+                            <PaddingRight>2pt</PaddingRight>
+                            <PaddingTop>2pt</PaddingTop>
+                            <PaddingBottom>2pt</PaddingBottom>
+                          </Style>
+                        </Textbox>
+                      </CellContents>
+                    </TablixCell>
+                    <TablixCell>
+                      <CellContents>
+                        <Textbox Name="Textbox148">
+                          <CanGrow>true</CanGrow>
+                          <KeepTogether>true</KeepTogether>
+                          <Paragraphs>
+                            <Paragraph>
+                              <TextRuns>
+                                <TextRun>
+                                  <Value>=Count(Fields!LearnRefNumber.Value)
+/
+ReportItems!GrandTotalApps.Value</Value>
+                                  <Style>
+                                    <FontFamily>Calibri</FontFamily>
+                                    <FontWeight>Bold</FontWeight>
+                                    <Format>0.0%</Format>
+                                    <Color>White</Color>
+                                  </Style>
+                                </TextRun>
+                              </TextRuns>
+                              <Style />
+                            </Paragraph>
+                          </Paragraphs>
+                          <rd:DefaultName>Textbox148</rd:DefaultName>
+                          <Style>
+                            <Border>
+                              <Color>#ffffff</Color>
+                              <Style>Solid</Style>
+                            </Border>
+                            <BackgroundColor>#88527a</BackgroundColor>
+                            <PaddingLeft>2pt</PaddingLeft>
+                            <PaddingRight>2pt</PaddingRight>
+                            <PaddingTop>2pt</PaddingTop>
+                            <PaddingBottom>2pt</PaddingBottom>
+                          </Style>
+                        </Textbox>
+                      </CellContents>
+                    </TablixCell>
+                  </TablixCells>
+                </TablixRow>
+              </TablixRows>
+            </TablixBody>
+            <TablixColumnHierarchy>
+              <TablixMembers>
+                <TablixMember>
+                  <Group Name="OverdueCategoryOrder">
+                    <GroupExpressions>
+                      <GroupExpression>=Fields!OverdueCategoryOrder.Value</GroupExpression>
+                    </GroupExpressions>
+                  </Group>
+                  <SortExpressions>
+                    <SortExpression>
+                      <Value>=Fields!OverdueCategoryOrder.Value</Value>
+                    </SortExpression>
+                  </SortExpressions>
+                  <TablixMembers>
+                    <TablixMember>
+                      <TablixHeader>
+                        <Size>0.6cm</Size>
+                        <CellContents>
+                          <Textbox Name="Textbox4">
+                            <CanGrow>true</CanGrow>
+                            <KeepTogether>true</KeepTogether>
+                            <Paragraphs>
+                              <Paragraph>
+                                <TextRuns>
+                                  <TextRun>
+                                    <Value />
+                                    <Style>
+                                      <FontFamily>Calibri</FontFamily>
+                                      <FontWeight>Bold</FontWeight>
+                                    </Style>
+                                  </TextRun>
+                                </TextRuns>
+                                <Style>
+                                  <TextAlign>Center</TextAlign>
+                                </Style>
+                              </Paragraph>
+                            </Paragraphs>
+                            <rd:DefaultName>Textbox4</rd:DefaultName>
+                            <Style>
+                              <Border>
+                                <Color>#ffffff</Color>
+                                <Style>Solid</Style>
+                              </Border>
+                              <TopBorder>
+                                <Style>Solid</Style>
+                                <Width>1pt</Width>
+                              </TopBorder>
+                              <BottomBorder>
+                                <Style>Solid</Style>
+                                <Width>1pt</Width>
+                              </BottomBorder>
+                              <LeftBorder>
+                                <Style>Solid</Style>
+                                <Width>1pt</Width>
+                              </LeftBorder>
+                              <RightBorder>
+                                <Style>Solid</Style>
+                                <Width>1pt</Width>
+                              </RightBorder>
+                              <BackgroundColor>#00b0ad</BackgroundColor>
+                              <VerticalAlign>Bottom</VerticalAlign>
+                              <PaddingLeft>2pt</PaddingLeft>
+                              <PaddingRight>2pt</PaddingRight>
+                              <PaddingTop>2pt</PaddingTop>
+                              <PaddingBottom>2pt</PaddingBottom>
+                            </Style>
+                          </Textbox>
+                        </CellContents>
+                      </TablixHeader>
+                      <TablixMembers>
+                        <TablixMember>
+                          <TablixHeader>
+                            <Size>1cm</Size>
+                            <CellContents>
+                              <Textbox Name="Textbox134">
+                                <KeepTogether>true</KeepTogether>
+                                <Paragraphs>
+                                  <Paragraph>
+                                    <TextRuns>
+                                      <TextRun>
+                                        <Value />
+                                        <Style>
+                                          <FontFamily>Calibri</FontFamily>
+                                          <FontWeight>Bold</FontWeight>
+                                          <Color>White</Color>
+                                        </Style>
+                                      </TextRun>
+                                    </TextRuns>
+                                    <Style />
+                                  </Paragraph>
+                                </Paragraphs>
+                                <rd:DefaultName>Textbox134</rd:DefaultName>
+                                <Style>
+                                  <Border>
+                                    <Color>#ffffff</Color>
+                                    <Style>Solid</Style>
+                                  </Border>
+                                  <TopBorder>
+                                    <Style>Solid</Style>
+                                    <Width>1pt</Width>
+                                  </TopBorder>
+                                  <BottomBorder>
+                                    <Style>Solid</Style>
+                                    <Width>1pt</Width>
+                                  </BottomBorder>
+                                  <LeftBorder>
+                                    <Style>Solid</Style>
+                                    <Width>1pt</Width>
+                                  </LeftBorder>
+                                  <RightBorder>
+                                    <Style>Solid</Style>
+                                    <Width>1pt</Width>
+                                  </RightBorder>
+                                  <BackgroundColor>#00b0ad</BackgroundColor>
+                                  <VerticalAlign>Bottom</VerticalAlign>
+                                  <PaddingLeft>2pt</PaddingLeft>
+                                  <PaddingRight>2pt</PaddingRight>
+                                  <PaddingTop>2pt</PaddingTop>
+                                  <PaddingBottom>2pt</PaddingBottom>
+                                </Style>
+                              </Textbox>
+                            </CellContents>
+                          </TablixHeader>
+                        </TablixMember>
+                      </TablixMembers>
+                    </TablixMember>
+                    <TablixMember>
+                      <TablixHeader>
+                        <Size>0.6cm</Size>
+                        <CellContents>
+                          <Textbox Name="OverdueCategory3">
+                            <CanGrow>true</CanGrow>
+                            <KeepTogether>true</KeepTogether>
+                            <Paragraphs>
+                              <Paragraph>
+                                <TextRuns>
+                                  <TextRun>
+                                    <Value>=Fields!OverdueCategory.Value</Value>
+                                    <Style>
+                                      <FontFamily>Calibri</FontFamily>
+                                      <FontWeight>Bold</FontWeight>
+                                    </Style>
+                                  </TextRun>
+                                </TextRuns>
+                                <Style>
+                                  <TextAlign>Center</TextAlign>
+                                </Style>
+                              </Paragraph>
+                            </Paragraphs>
+                            <rd:DefaultName>OverdueCategory</rd:DefaultName>
+                            <Style>
+                              <Border>
+                                <Color>#ffffff</Color>
+                                <Style>Solid</Style>
+                              </Border>
+                              <TopBorder>
+                                <Style>Solid</Style>
+                                <Width>1pt</Width>
+                              </TopBorder>
+                              <BottomBorder>
+                                <Style>Solid</Style>
+                                <Width>1pt</Width>
+                              </BottomBorder>
+                              <LeftBorder>
+                                <Style>Solid</Style>
+                                <Width>1pt</Width>
+                              </LeftBorder>
+                              <RightBorder>
+                                <Style>Solid</Style>
+                                <Width>1pt</Width>
+                              </RightBorder>
+                              <BackgroundColor>#00b0ad</BackgroundColor>
+                              <VerticalAlign>Bottom</VerticalAlign>
+                              <PaddingLeft>2pt</PaddingLeft>
+                              <PaddingRight>2pt</PaddingRight>
+                              <PaddingTop>2pt</PaddingTop>
+                              <PaddingBottom>2pt</PaddingBottom>
+                            </Style>
+                          </Textbox>
+                        </CellContents>
+                      </TablixHeader>
+                      <TablixMembers>
+                        <TablixMember>
+                          <Group Name="OverdueAmountOrder">
+                            <GroupExpressions>
+                              <GroupExpression>=Fields!OverdueAmountOrder.Value</GroupExpression>
+                            </GroupExpressions>
+                          </Group>
+                          <SortExpressions>
+                            <SortExpression>
+                              <Value>=Fields!OverdueAmountOrder.Value</Value>
+                            </SortExpression>
+                          </SortExpressions>
+                          <TablixMembers>
+                            <TablixMember>
+                              <TablixHeader>
+                                <Size>1cm</Size>
+                                <CellContents>
+                                  <Textbox Name="Textbox584">
+                                    <CanGrow>true</CanGrow>
+                                    <KeepTogether>true</KeepTogether>
+                                    <Paragraphs>
+                                      <Paragraph>
+                                        <TextRuns>
+                                          <TextRun>
+                                            <Value>=Fields!OverdueAmount.Value</Value>
+                                            <Style>
+                                              <FontFamily>Calibri</FontFamily>
+                                              <FontWeight>Bold</FontWeight>
+                                              <Color>White</Color>
+                                            </Style>
+                                          </TextRun>
+                                        </TextRuns>
+                                        <Style />
+                                      </Paragraph>
+                                    </Paragraphs>
+                                    <rd:DefaultName>Textbox568</rd:DefaultName>
+                                    <Style>
+                                      <Border>
+                                        <Color>#ffffff</Color>
+                                        <Style>Solid</Style>
+                                      </Border>
+                                      <TopBorder>
+                                        <Style>Solid</Style>
+                                        <Width>1pt</Width>
+                                      </TopBorder>
+                                      <BottomBorder>
+                                        <Style>Solid</Style>
+                                        <Width>1pt</Width>
+                                      </BottomBorder>
+                                      <LeftBorder>
+                                        <Style>Solid</Style>
+                                        <Width>1pt</Width>
+                                      </LeftBorder>
+                                      <RightBorder>
+                                        <Style>Solid</Style>
+                                        <Width>1pt</Width>
+                                      </RightBorder>
+                                      <BackgroundColor>#88527a</BackgroundColor>
+                                      <VerticalAlign>Bottom</VerticalAlign>
+                                      <PaddingLeft>2pt</PaddingLeft>
+                                      <PaddingRight>2pt</PaddingRight>
+                                      <PaddingTop>2pt</PaddingTop>
+                                      <PaddingBottom>2pt</PaddingBottom>
+                                    </Style>
+                                  </Textbox>
+                                </CellContents>
+                              </TablixHeader>
+                              <TablixMembers>
+                                <TablixMember />
+                              </TablixMembers>
+                            </TablixMember>
+                          </TablixMembers>
+                          <Visibility>
+                            <Hidden>=IIF(Fields!OverdueAmountOrder.Value = 1, True,
+IIF(Fields!OverdueAmountOrder.Value = 2, True,
+IIF(Fields!OverdueAmountOrder.Value = 3, True,
+IIF(Fields!OverdueAmountOrder.Value = 12, True,
+IIF(Fields!OverdueAmountOrder.Value = 13, True,
+False)
+))))</Hidden>
+                          </Visibility>
+                        </TablixMember>
+                        <TablixMember>
+                          <TablixHeader>
+                            <Size>1cm</Size>
+                            <CellContents>
+                              <Textbox Name="OverdueCategory2">
+                                <CanGrow>true</CanGrow>
+                                <KeepTogether>true</KeepTogether>
+                                <Paragraphs>
+                                  <Paragraph>
+                                    <TextRuns>
+                                      <TextRun>
+                                        <Value>Total </Value>
+                                        <Style>
+                                          <FontFamily>Calibri</FontFamily>
+                                          <FontWeight>Bold</FontWeight>
+                                          <Color>White</Color>
+                                        </Style>
+                                      </TextRun>
+                                      <TextRun>
+                                        <Value>=Fields!OverdueCategory.Value</Value>
+                                        <Style>
+                                          <FontFamily>Calibri</FontFamily>
+                                          <FontWeight>Bold</FontWeight>
+                                          <Color>White</Color>
+                                        </Style>
+                                      </TextRun>
+                                    </TextRuns>
+                                    <Style />
+                                  </Paragraph>
+                                </Paragraphs>
+                                <rd:DefaultName>OverdueCategory</rd:DefaultName>
+                                <Style>
+                                  <Border>
+                                    <Color>#ffffff</Color>
+                                    <Style>Solid</Style>
+                                  </Border>
+                                  <TopBorder>
+                                    <Style>Solid</Style>
+                                    <Width>1pt</Width>
+                                  </TopBorder>
+                                  <BottomBorder>
+                                    <Style>Solid</Style>
+                                    <Width>1pt</Width>
+                                  </BottomBorder>
+                                  <LeftBorder>
+                                    <Style>Solid</Style>
+                                    <Width>1pt</Width>
+                                  </LeftBorder>
+                                  <RightBorder>
+                                    <Style>Solid</Style>
+                                    <Width>1pt</Width>
+                                  </RightBorder>
+                                  <BackgroundColor>#88527a</BackgroundColor>
+                                  <VerticalAlign>Bottom</VerticalAlign>
+                                  <PaddingLeft>2pt</PaddingLeft>
+                                  <PaddingRight>2pt</PaddingRight>
+                                  <PaddingTop>2pt</PaddingTop>
+                                  <PaddingBottom>2pt</PaddingBottom>
+                                </Style>
+                              </Textbox>
+                            </CellContents>
+                          </TablixHeader>
+                          <TablixMembers>
+                            <TablixMember />
+                            <TablixMember />
+                          </TablixMembers>
+                        </TablixMember>
+                      </TablixMembers>
+                    </TablixMember>
+                  </TablixMembers>
+                </TablixMember>
+              </TablixMembers>
+            </TablixColumnHierarchy>
+            <TablixRowHierarchy>
+              <TablixMembers>
+                <TablixMember>
+                  <Group Name="StandardCode">
+                    <GroupExpressions>
+                      <GroupExpression>=Fields!StandardCode.Value</GroupExpression>
+                    </GroupExpressions>
+                  </Group>
+                  <SortExpressions>
+                    <SortExpression>
+                      <Value>=Fields!StandardName.Value</Value>
+                    </SortExpression>
+                    <SortExpression>
+                      <Value>=Fields!StandardCode.Value</Value>
+                    </SortExpression>
+                  </SortExpressions>
+                  <TablixHeader>
+                    <Size>2.2cm</Size>
+                    <CellContents>
+                      <Textbox Name="StandardCode">
+                        <CanGrow>true</CanGrow>
+                        <KeepTogether>true</KeepTogether>
+                        <Paragraphs>
+                          <Paragraph>
+                            <TextRuns>
+                              <TextRun>
+                                <Value>=Fields!StandardCode.Value</Value>
+                                <Style>
+                                  <FontFamily>Calibri</FontFamily>
+                                  <FontSize>8pt</FontSize>
+                                </Style>
+                              </TextRun>
+                            </TextRuns>
+                            <Style />
+                          </Paragraph>
+                        </Paragraphs>
+                        <rd:DefaultName>StandardCode</rd:DefaultName>
+                        <Style>
+                          <Border>
+                            <Color>#88527a</Color>
+                            <Style>Solid</Style>
+                          </Border>
+                          <TopBorder>
+                            <Style>Solid</Style>
+                            <Width>1pt</Width>
+                          </TopBorder>
+                          <BottomBorder>
+                            <Style>Solid</Style>
+                            <Width>1pt</Width>
+                          </BottomBorder>
+                          <LeftBorder>
+                            <Style>Solid</Style>
+                            <Width>1pt</Width>
+                          </LeftBorder>
+                          <RightBorder>
+                            <Style>Solid</Style>
+                            <Width>1pt</Width>
+                          </RightBorder>
+                          <PaddingLeft>2pt</PaddingLeft>
+                          <PaddingRight>2pt</PaddingRight>
+                          <PaddingTop>2pt</PaddingTop>
+                          <PaddingBottom>2pt</PaddingBottom>
+                        </Style>
+                      </Textbox>
+                    </CellContents>
+                  </TablixHeader>
+                  <TablixMembers>
+                    <TablixMember>
+                      <TablixHeader>
+                        <Size>7cm</Size>
+                        <CellContents>
+                          <Textbox Name="StandardName">
+                            <CanGrow>true</CanGrow>
+                            <KeepTogether>true</KeepTogether>
+                            <Paragraphs>
+                              <Paragraph>
+                                <TextRuns>
+                                  <TextRun>
+                                    <Value>=Fields!StandardName.Value</Value>
+                                    <Style>
+                                      <FontFamily>Calibri</FontFamily>
+                                      <FontSize>8pt</FontSize>
+                                    </Style>
+                                  </TextRun>
+                                </TextRuns>
+                                <Style />
+                              </Paragraph>
+                            </Paragraphs>
+                            <rd:DefaultName>StandardName</rd:DefaultName>
+                            <Style>
+                              <Border>
+                                <Color>#88527a</Color>
+                                <Style>Solid</Style>
+                              </Border>
+                              <TopBorder>
+                                <Style>Solid</Style>
+                                <Width>1pt</Width>
+                              </TopBorder>
+                              <BottomBorder>
+                                <Style>Solid</Style>
+                                <Width>1pt</Width>
+                              </BottomBorder>
+                              <LeftBorder>
+                                <Style>Solid</Style>
+                                <Width>1pt</Width>
+                              </LeftBorder>
+                              <RightBorder>
+                                <Style>Solid</Style>
+                                <Width>1pt</Width>
+                              </RightBorder>
+                              <PaddingLeft>2pt</PaddingLeft>
+                              <PaddingRight>2pt</PaddingRight>
+                              <PaddingTop>2pt</PaddingTop>
+                              <PaddingBottom>2pt</PaddingBottom>
+                            </Style>
+                          </Textbox>
+                        </CellContents>
+                      </TablixHeader>
+                      <TablixMembers>
+                        <TablixMember>
+                          <TablixHeader>
+                            <Size>1cm</Size>
+                            <CellContents>
+                              <Textbox Name="TotalApps">
+                                <CanGrow>true</CanGrow>
+                                <KeepTogether>true</KeepTogether>
+                                <Paragraphs>
+                                  <Paragraph>
+                                    <TextRuns>
+                                      <TextRun>
+                                        <Value>=Count(Fields!LearnRefNumber.Value)</Value>
+                                        <Style>
+                                          <FontFamily>Calibri</FontFamily>
+                                          <FontSize>8pt</FontSize>
+                                          <FontWeight>Bold</FontWeight>
+                                          <Format>#,0</Format>
+                                          <TextDecoration>Underline</TextDecoration>
+                                          <Color>Blue</Color>
+                                        </Style>
+                                      </TextRun>
+                                    </TextRuns>
+                                    <Style />
+                                  </Paragraph>
+                                </Paragraphs>
+                                <ActionInfo>
+                                  <Actions>
+                                    <Action>
+                                      <Drillthrough>
+                                        <ReportName>APP001b - Overdue Apprenticeships - Detail</ReportName>
+                                        <Parameters>
+                                          <Parameter Name="AcademicYear">
+                                            <Value>=Parameters!AcademicYear.Value</Value>
+                                          </Parameter>
+                                          <Parameter Name="OverdueOnly">
+                                            <Value>-1</Value>
+                                          </Parameter>
+                                          <Parameter Name="Standard">
+                                            <Value>=Fields!StandardCode.Value</Value>
+                                          </Parameter>
+                                          <Parameter Name="OverdueAmount">
+                                            <Value>-1</Value>
+                                          </Parameter>
+                                          <Parameter Name="TrainingConsultant1">
+                                            <Value>=Parameters!TrainingConsultant1.Value</Value>
+                                          </Parameter>
+                                        </Parameters>
+                                      </Drillthrough>
+                                    </Action>
+                                  </Actions>
+                                </ActionInfo>
+                                <Style>
+                                  <Border>
+                                    <Color>#88527a</Color>
+                                    <Style>Solid</Style>
+                                  </Border>
+                                  <PaddingLeft>2pt</PaddingLeft>
+                                  <PaddingRight>2pt</PaddingRight>
+                                  <PaddingTop>2pt</PaddingTop>
+                                  <PaddingBottom>2pt</PaddingBottom>
+                                </Style>
+                              </Textbox>
+                            </CellContents>
+                          </TablixHeader>
+                          <TablixMembers>
+                            <TablixMember />
+                          </TablixMembers>
+                        </TablixMember>
+                      </TablixMembers>
+                    </TablixMember>
+                  </TablixMembers>
+                </TablixMember>
+                <TablixMember>
+                  <TablixHeader>
+                    <Size>2.2cm</Size>
+                    <CellContents>
+                      <Textbox Name="Textbox116">
+                        <CanGrow>true</CanGrow>
+                        <KeepTogether>true</KeepTogether>
+                        <Paragraphs>
+                          <Paragraph>
+                            <TextRuns>
+                              <TextRun>
+                                <Value>=CountDistinct(Fields!StandardCode.Value)</Value>
+                                <Style>
+                                  <FontStyle>Italic</FontStyle>
+                                  <FontFamily>Calibri</FontFamily>
+                                  <FontWeight>Bold</FontWeight>
+                                  <Color>White</Color>
+                                </Style>
+                              </TextRun>
+                              <TextRun>
+                                <Value> Standards</Value>
+                                <Style>
+                                  <FontStyle>Italic</FontStyle>
+                                  <FontFamily>Calibri</FontFamily>
+                                  <FontWeight>Bold</FontWeight>
+                                  <Color>White</Color>
+                                </Style>
+                              </TextRun>
+                            </TextRuns>
+                            <Style>
+                              <TextAlign>Left</TextAlign>
+                            </Style>
+                          </Paragraph>
+                        </Paragraphs>
+                        <rd:DefaultName>Textbox116</rd:DefaultName>
+                        <Style>
+                          <Border>
+                            <Color>#ffffff</Color>
+                            <Style>Solid</Style>
+                          </Border>
+                          <TopBorder>
+                            <Style>Solid</Style>
+                            <Width>1pt</Width>
+                          </TopBorder>
+                          <BottomBorder>
+                            <Style>Solid</Style>
+                            <Width>1pt</Width>
+                          </BottomBorder>
+                          <LeftBorder>
+                            <Style>Solid</Style>
+                            <Width>1pt</Width>
+                          </LeftBorder>
+                          <RightBorder>
+                            <Style>Solid</Style>
+                            <Width>1pt</Width>
+                          </RightBorder>
+                          <BackgroundColor>#88527a</BackgroundColor>
+                          <PaddingLeft>2pt</PaddingLeft>
+                          <PaddingRight>2pt</PaddingRight>
+                          <PaddingTop>2pt</PaddingTop>
+                          <PaddingBottom>2pt</PaddingBottom>
+                        </Style>
+                      </Textbox>
+                    </CellContents>
+                  </TablixHeader>
+                  <TablixMembers>
+                    <TablixMember>
+                      <TablixHeader>
+                        <Size>7cm</Size>
+                        <CellContents>
+                          <Textbox Name="Textbox117">
+                            <CanGrow>true</CanGrow>
+                            <KeepTogether>true</KeepTogether>
+                            <Paragraphs>
+                              <Paragraph>
+                                <TextRuns>
+                                  <TextRun>
+                                    <Value>Grand Totals</Value>
+                                    <Style>
+                                      <FontFamily>Calibri</FontFamily>
+                                      <FontWeight>Bold</FontWeight>
+                                      <Color>White</Color>
+                                    </Style>
+                                  </TextRun>
+                                </TextRuns>
+                                <Style>
+                                  <TextAlign>Right</TextAlign>
+                                </Style>
+                              </Paragraph>
+                            </Paragraphs>
+                            <rd:DefaultName>Textbox116</rd:DefaultName>
+                            <Style>
+                              <Border>
+                                <Color>#ffffff</Color>
+                                <Style>Solid</Style>
+                              </Border>
+                              <TopBorder>
+                                <Style>Solid</Style>
+                                <Width>1pt</Width>
+                              </TopBorder>
+                              <BottomBorder>
+                                <Style>Solid</Style>
+                                <Width>1pt</Width>
+                              </BottomBorder>
+                              <LeftBorder>
+                                <Style>Solid</Style>
+                                <Width>1pt</Width>
+                              </LeftBorder>
+                              <RightBorder>
+                                <Style>Solid</Style>
+                                <Width>1pt</Width>
+                              </RightBorder>
+                              <BackgroundColor>#88527a</BackgroundColor>
+                              <PaddingLeft>2pt</PaddingLeft>
+                              <PaddingRight>2pt</PaddingRight>
+                              <PaddingTop>2pt</PaddingTop>
+                              <PaddingBottom>2pt</PaddingBottom>
+                            </Style>
+                          </Textbox>
+                        </CellContents>
+                      </TablixHeader>
+                      <TablixMembers>
+                        <TablixMember>
+                          <TablixHeader>
+                            <Size>1cm</Size>
+                            <CellContents>
+                              <Textbox Name="GrandTotalApps">
+                                <CanGrow>true</CanGrow>
+                                <KeepTogether>true</KeepTogether>
+                                <Paragraphs>
+                                  <Paragraph>
+                                    <TextRuns>
+                                      <TextRun>
+                                        <Value>=Count(Fields!LearnRefNumber.Value)</Value>
+                                        <Style>
+                                          <FontFamily>Calibri</FontFamily>
+                                          <FontWeight>Bold</FontWeight>
+                                          <Format>#,0</Format>
+                                          <TextDecoration>Underline</TextDecoration>
+                                          <Color>White</Color>
+                                        </Style>
+                                      </TextRun>
+                                    </TextRuns>
+                                    <Style />
+                                  </Paragraph>
+                                </Paragraphs>
+                                <ActionInfo>
+                                  <Actions>
+                                    <Action>
+                                      <Drillthrough>
+                                        <ReportName>APP001b - Overdue Apprenticeships - Detail</ReportName>
+                                        <Parameters>
+                                          <Parameter Name="AcademicYear">
+                                            <Value>=Parameters!AcademicYear.Value</Value>
+                                          </Parameter>
+                                          <Parameter Name="OverdueOnly">
+                                            <Value>-1</Value>
+                                          </Parameter>
+                                          <Parameter Name="Standard">
+                                            <Value>ALL</Value>
+                                          </Parameter>
+                                          <Parameter Name="OverdueAmount">
+                                            <Value>-1</Value>
+                                          </Parameter>
+                                          <Parameter Name="TrainingConsultant1">
+                                            <Value>=Parameters!TrainingConsultant1.Value</Value>
+                                          </Parameter>
+                                        </Parameters>
+                                      </Drillthrough>
+                                    </Action>
+                                  </Actions>
+                                </ActionInfo>
+                                <Style>
+                                  <Border>
+                                    <Color>#ffffff</Color>
+                                    <Style>Solid</Style>
+                                  </Border>
+                                  <BackgroundColor>#88527a</BackgroundColor>
+                                  <PaddingLeft>2pt</PaddingLeft>
+                                  <PaddingRight>2pt</PaddingRight>
+                                  <PaddingTop>2pt</PaddingTop>
+                                  <PaddingBottom>2pt</PaddingBottom>
+                                </Style>
+                              </Textbox>
+                            </CellContents>
+                          </TablixHeader>
+                          <TablixMembers>
+                            <TablixMember />
+                          </TablixMembers>
+                        </TablixMember>
+                      </TablixMembers>
+                    </TablixMember>
+                  </TablixMembers>
+                </TablixMember>
+              </TablixMembers>
+            </TablixRowHierarchy>
+            <DataSetName>APP001</DataSetName>
+            <Height>2.7cm</Height>
+            <Width>13.6cm</Width>
+            <Style>
+              <Border>
+                <Style>None</Style>
+              </Border>
+            </Style>
+          </Tablix>
+        </ReportItems>
+        <Height>2.7cm</Height>
+        <Style />
+      </Body>
+      <Width>26.51129cm</Width>
+      <Page>
+        <PageHeader>
+          <Height>2cm</Height>
+          <PrintOnFirstPage>true</PrintOnFirstPage>
+          <PrintOnLastPage>true</PrintOnLastPage>
+          <ReportItems>
+            <Textbox Name="HeaderReportTitle">
+              <CanGrow>true</CanGrow>
+              <KeepTogether>true</KeepTogether>
+              <Paragraphs>
+                <Paragraph>
+                  <TextRuns>
+                    <TextRun>
+                      <Value>Report Title Here</Value>
+                      <Style>
+                        <FontFamily>Calibri</FontFamily>
+                        <FontSize>14pt</FontSize>
+                        <FontWeight>Bold</FontWeight>
+                      </Style>
+                    </TextRun>
+                  </TextRuns>
+                  <Style />
+                </Paragraph>
+                <Paragraph>
+                  <TextRuns>
+                    <TextRun>
+                      <Value />
+                      <Style>
+                        <FontFamily>Calibri</FontFamily>
+                        <FontSize>18pt</FontSize>
+                        <FontWeight>Normal</FontWeight>
+                      </Style>
+                    </TextRun>
+                  </TextRuns>
+                  <Style />
+                </Paragraph>
+                <Paragraph>
+                  <TextRuns>
+                    <TextRun>
+                      <Value>Report Description Here</Value>
+                      <Style>
+                        <FontFamily>Calibri</FontFamily>
+                        <FontWeight>Normal</FontWeight>
+                      </Style>
+                    </TextRun>
+                  </TextRuns>
+                  <Style />
+                </Paragraph>
+              </Paragraphs>
+              <Left>2cm</Left>
+              <Height>2cm</Height>
+              <Width>22.27174cm</Width>
+              <Style>
+                <Border>
+                  <Style>None</Style>
+                </Border>
+                <PaddingLeft>2pt</PaddingLeft>
+                <PaddingRight>2pt</PaddingRight>
+                <PaddingTop>2pt</PaddingTop>
+                <PaddingBottom>2pt</PaddingBottom>
+              </Style>
+            </Textbox>
+            <Textbox Name="HeaderReportCode">
+              <CanGrow>true</CanGrow>
+              <KeepTogether>true</KeepTogether>
+              <Paragraphs>
+                <Paragraph>
+                  <TextRuns>
+                    <TextRun>
+                      <Value>XXX001a</Value>
+                      <Style>
+                        <FontWeight>Bold</FontWeight>
+                      </Style>
+                    </TextRun>
+                  </TextRuns>
+                  <Style>
+                    <TextAlign>Center</TextAlign>
+                  </Style>
+                </Paragraph>
+              </Paragraphs>
+              <Height>2cm</Height>
+              <Width>2cm</Width>
+              <ZIndex>1</ZIndex>
+              <Style>
+                <Border>
+                  <Color>White</Color>
+                  <Style>None</Style>
+                </Border>
+                <BackgroundColor>#00b0ad</BackgroundColor>
+                <VerticalAlign>Bottom</VerticalAlign>
+                <PaddingLeft>2pt</PaddingLeft>
+                <PaddingRight>2pt</PaddingRight>
+                <PaddingTop>2pt</PaddingTop>
+                <PaddingBottom>2pt</PaddingBottom>
+              </Style>
+            </Textbox>
+            <Image Name="Image1">
+              <Source>Embedded</Source>
+              <Value>HSDC</Value>
+              <Sizing>FitProportional</Sizing>
+              <Left>24.44812cm</Left>
+              <Height>2cm</Height>
+              <Width>2.06316cm</Width>
+              <ZIndex>2</ZIndex>
+              <Style>
+                <Border>
+                  <Style>None</Style>
+                </Border>
+              </Style>
+            </Image>
+          </ReportItems>
+          <Style />
+        </PageHeader>
+        <PageFooter>
+          <Height>1.41166cm</Height>
+          <PrintOnFirstPage>true</PrintOnFirstPage>
+          <PrintOnLastPage>true</PrintOnLastPage>
+          <ReportItems>
+            <Textbox Name="FooterDate">
+              <CanGrow>true</CanGrow>
+              <KeepTogether>true</KeepTogether>
+              <Paragraphs>
+                <Paragraph>
+                  <TextRuns>
+                    <TextRun>
+                      <Value>="Generated: " &amp; Now() &amp; " by " &amp; User!UserID</Value>
+                      <Style>
+                        <FontFamily>Calibri</FontFamily>
+                      </Style>
+                    </TextRun>
+                  </TextRuns>
+                  <Style>
+                    <TextAlign>Left</TextAlign>
+                  </Style>
+                </Paragraph>
+              </Paragraphs>
+              <Top>0.81166cm</Top>
+              <Height>0.6cm</Height>
+              <Width>21.39417cm</Width>
+              <Style>
+                <Border>
+                  <Style>None</Style>
+                </Border>
+                <PaddingLeft>2pt</PaddingLeft>
+                <PaddingRight>2pt</PaddingRight>
+                <PaddingTop>2pt</PaddingTop>
+                <PaddingBottom>2pt</PaddingBottom>
+              </Style>
+            </Textbox>
+            <Textbox Name="FooterPages">
+              <CanGrow>true</CanGrow>
+              <KeepTogether>true</KeepTogether>
+              <Paragraphs>
+                <Paragraph>
+                  <TextRuns>
+                    <TextRun>
+                      <Value>=Globals!PageNumber &amp; " of " &amp; Globals!TotalPages</Value>
+                      <Style>
+                        <FontFamily>Calibri</FontFamily>
+                      </Style>
+                    </TextRun>
+                  </TextRuns>
+                  <Style>
+                    <TextAlign>Right</TextAlign>
+                  </Style>
+                </Paragraph>
+              </Paragraphs>
+              <Top>0.77638cm</Top>
+              <Left>21.62122cm</Left>
+              <Height>0.6cm</Height>
+              <Width>4.89007cm</Width>
+              <ZIndex>1</ZIndex>
+              <Style>
+                <Border>
+                  <Style>None</Style>
+                </Border>
+                <PaddingLeft>2pt</PaddingLeft>
+                <PaddingRight>2pt</PaddingRight>
+                <PaddingTop>2pt</PaddingTop>
+                <PaddingBottom>2pt</PaddingBottom>
+              </Style>
+            </Textbox>
+            <Textbox Name="FooterParameters">
+              <CanGrow>true</CanGrow>
+              <KeepTogether>true</KeepTogether>
+              <Paragraphs>
+                <Paragraph>
+                  <TextRuns>
+                    <TextRun>
+                      <Value>="Report Name: " &amp; Globals!ReportName &amp; ".   Parameters" 
+&amp; ": Academic Year = " &amp; Parameters!AcademicYear.Value 
+&amp; ", Overdue Only = " &amp; Code.MultiParamValues(JOIN ( Parameters!OverdueOnly.Label, ", " ), 5) 
+&amp; ", Standard = " &amp; Code.MultiParamValues(JOIN ( Parameters!Standard.Value, ", " ), 5) 
+&amp; ", Overdue Amount = " &amp; Code.MultiParamValues(JOIN ( Parameters!OverdueAmount.Label, ", " ), 5)</Value>
+                      <Style>
+                        <FontFamily>Calibri</FontFamily>
+                      </Style>
+                    </TextRun>
+                  </TextRuns>
+                  <Style>
+                    <TextAlign>Left</TextAlign>
+                  </Style>
+                </Paragraph>
+              </Paragraphs>
+              <Top>0.07055cm</Top>
+              <Height>0.6cm</Height>
+              <Width>21.39417cm</Width>
+              <ZIndex>2</ZIndex>
+              <Style>
+                <Border>
+                  <Style>None</Style>
+                </Border>
+                <PaddingLeft>2pt</PaddingLeft>
+                <PaddingRight>2pt</PaddingRight>
+                <PaddingTop>2pt</PaddingTop>
+                <PaddingBottom>2pt</PaddingBottom>
+              </Style>
+            </Textbox>
+            <Textbox Name="FooterReportType">
+              <CanGrow>true</CanGrow>
+              <KeepTogether>true</KeepTogether>
+              <Paragraphs>
+                <Paragraph>
+                  <TextRuns>
+                    <TextRun>
+                      <Value>Category Here</Value>
+                      <Style>
+                        <FontFamily>Calibri</FontFamily>
+                      </Style>
+                    </TextRun>
+                  </TextRuns>
+                  <Style>
+                    <TextAlign>Right</TextAlign>
+                  </Style>
+                </Paragraph>
+              </Paragraphs>
+              <Top>0.07055cm</Top>
+              <Left>21.62122cm</Left>
+              <Height>0.6cm</Height>
+              <Width>4.89007cm</Width>
+              <ZIndex>3</ZIndex>
+              <Style>
+                <Border>
+                  <Style>None</Style>
+                </Border>
+                <PaddingLeft>2pt</PaddingLeft>
+                <PaddingRight>2pt</PaddingRight>
+                <PaddingTop>2pt</PaddingTop>
+                <PaddingBottom>2pt</PaddingBottom>
+              </Style>
+            </Textbox>
+          </ReportItems>
+          <Style />
+        </PageFooter>
+        <PageHeight>21cm</PageHeight>
+        <PageWidth>29.7cm</PageWidth>
+        <InteractiveHeight>21cm</InteractiveHeight>
+        <InteractiveWidth>29.7cm</InteractiveWidth>
+        <LeftMargin>0.5cm</LeftMargin>
+        <RightMargin>0.5cm</RightMargin>
+        <TopMargin>0.5cm</TopMargin>
+        <BottomMargin>0.5cm</BottomMargin>
+        <ColumnSpacing>1cm</ColumnSpacing>
+        <Style />
+      </Page>
+    </ReportSection>
+  </ReportSections>
+  <ReportParameters>
+    <ReportParameter Name="AcademicYear">
+      <DataType>String</DataType>
+      <DefaultValue>
+        <DataSetReference>
+          <DataSetName>AcademicYearCur</DataSetName>
+          <ValueField>Code</ValueField>
+        </DataSetReference>
+      </DefaultValue>
+      <Prompt>Academic Year</Prompt>
+      <ValidValues>
+        <DataSetReference>
+          <DataSetName>AcademicYear</DataSetName>
+          <ValueField>Code</ValueField>
+          <LabelField>Description</LabelField>
+        </DataSetReference>
+      </ValidValues>
+    </ReportParameter>
+    <ReportParameter Name="OverdueOnly">
+      <DataType>String</DataType>
+      <DefaultValue>
+        <DataSetReference>
+          <DataSetName>OverdueOnly</DataSetName>
+          <ValueField>Code</ValueField>
+        </DataSetReference>
+      </DefaultValue>
+      <Prompt>Overdue Only</Prompt>
+      <ValidValues>
+        <DataSetReference>
+          <DataSetName>OverdueOnly</DataSetName>
+          <ValueField>Code</ValueField>
+          <LabelField>Dexcription</LabelField>
+        </DataSetReference>
+      </ValidValues>
+      <MultiValue>true</MultiValue>
+    </ReportParameter>
+    <ReportParameter Name="Standard">
+      <DataType>String</DataType>
+      <DefaultValue>
+        <DataSetReference>
+          <DataSetName>Standard</DataSetName>
+          <ValueField>Code</ValueField>
+        </DataSetReference>
+      </DefaultValue>
+      <Prompt>Standard</Prompt>
+      <ValidValues>
+        <DataSetReference>
+          <DataSetName>Standard</DataSetName>
+          <ValueField>Code</ValueField>
+          <LabelField>Description</LabelField>
+        </DataSetReference>
+      </ValidValues>
+      <MultiValue>true</MultiValue>
+    </ReportParameter>
+    <ReportParameter Name="OverdueAmount">
+      <DataType>String</DataType>
+      <DefaultValue>
+        <DataSetReference>
+          <DataSetName>OverdueAmount</DataSetName>
+          <ValueField>Code</ValueField>
+        </DataSetReference>
+      </DefaultValue>
+      <Prompt>Overdue Amount</Prompt>
+      <ValidValues>
+        <DataSetReference>
+          <DataSetName>OverdueAmount</DataSetName>
+          <ValueField>Code</ValueField>
+          <LabelField>Description</LabelField>
+        </DataSetReference>
+      </ValidValues>
+      <MultiValue>true</MultiValue>
+    </ReportParameter>
+    <ReportParameter Name="TrainingConsultant1">
+      <DataType>String</DataType>
+      <DefaultValue>
+        <Values>
+          <Value>ALL</Value>
+        </Values>
+      </DefaultValue>
+      <Prompt>Primary Training Consultant</Prompt>
+      <ValidValues>
+        <DataSetReference>
+          <DataSetName>TrainingConsultant</DataSetName>
+          <ValueField>Code</ValueField>
+          <LabelField>Description</LabelField>
+        </DataSetReference>
+      </ValidValues>
+      <MultiValue>true</MultiValue>
+    </ReportParameter>
+  </ReportParameters>
+  <ReportParametersLayout>
+    <GridLayoutDefinition>
+      <NumberOfColumns>2</NumberOfColumns>
+      <NumberOfRows>3</NumberOfRows>
+      <CellDefinitions>
+        <CellDefinition>
+          <ColumnIndex>0</ColumnIndex>
+          <RowIndex>0</RowIndex>
+          <ParameterName>AcademicYear</ParameterName>
+        </CellDefinition>
+        <CellDefinition>
+          <ColumnIndex>1</ColumnIndex>
+          <RowIndex>0</RowIndex>
+          <ParameterName>OverdueOnly</ParameterName>
+        </CellDefinition>
+        <CellDefinition>
+          <ColumnIndex>0</ColumnIndex>
+          <RowIndex>1</RowIndex>
+          <ParameterName>Standard</ParameterName>
+        </CellDefinition>
+        <CellDefinition>
+          <ColumnIndex>1</ColumnIndex>
+          <RowIndex>1</RowIndex>
+          <ParameterName>OverdueAmount</ParameterName>
+        </CellDefinition>
+        <CellDefinition>
+          <ColumnIndex>0</ColumnIndex>
+          <RowIndex>2</RowIndex>
+          <ParameterName>TrainingConsultant1</ParameterName>
+        </CellDefinition>
+      </CellDefinitions>
+    </GridLayoutDefinition>
+  </ReportParametersLayout>
+  <Code>Public Function MultiParamValues(ByVal param As String, ByVal maxEntries As Integer) AS String
+    Dim paramValues() As String
+    Dim numSelected As Integer
+    Dim returnValue As String
+    Dim i As Integer
+    returnValue = ""
+
+    Try
+        paramValues = param.split(", ")
+        numSelected = paramValues.Length
+	
+	If Array.IndexOf(paramValues, "ALL") &gt;= 0 Then
+		Return "All"
+	ElseIf Array.IndexOf(paramValues, "-1") &gt;= 0 Then
+		Return "All"
+	Else
+        	If (maxEntries &gt; numSelected) THEN
+            		maxEntries = numSelected
+        	End If
+
+        	If (numSelected &gt; 5) Then
+            		For i = 0 To maxEntries - 1
+                	returnValue += ", " + paramValues(i).ToString()
+            		Next
+            		Return returnValue + "..."
+        	Else
+            		For i = 0 To numSelected - 1
+                		returnValue += ", " + paramValues(i).ToString()
+            		Next
+            		Return returnValue
+        	End If
+	End If
+    Catch
+        Return "Error"
+    End Try
+End Function
+
+Public Function FormatPercent(ByVal cellValue As DECIMAL) AS String
+    Dim returnValue As String
+
+    Try
+        IF (ROUND(cellValue, 2) = 0.00) THEN
+            returnValue = "0%"
+        ELSEIF (ROUND(cellValue, 2) = 1.00) THEN
+            returnValue = "0%"
+        ELSE
+            returnValue = "0.0%"
+        END IF
+        
+        Return returnValue
+    Catch
+        Return "Error"
+    End Try
+End Function
+
+Function OpenURL(ByVal URL As String) As String
+    Return "javascript:void(window.open('" &amp; System.Uri.EscapeDataString(URL) &amp; "','_blank'))"
+End Function</Code>
+  <EmbeddedImages>
+    <EmbeddedImage Name="HSDC">
+      <MIMEType>image/png</MIMEType>
+      <ImageData>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</ImageData>
+    </EmbeddedImage>
+  </EmbeddedImages>
+  <Language>en-GB</Language>
+  <ConsumeContainerWhitespace>true</ConsumeContainerWhitespace>
+  <rd:ReportUnitType>Cm</rd:ReportUnitType>
+  <rd:ReportID>9fff6b13-cd8f-4a15-9969-7d34e10b73cd</rd:ReportID>
+</Report>
